@@ -1,0 +1,28 @@
+package notifications_entities
+
+import (
+	"github.com/pixie-sh/core-go/pkg/models/database_models"
+	"github.com/pixie-sh/core-go/pkg/models/language_models"
+	"github.com/pixie-sh/core-go/pkg/models/notification_models"
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+// Action represents a notification action that defines how to deliver a notification
+type Action struct {
+	database_models.SoftDeletable
+
+	ID                uid.UID                                      `gorm:"primaryKey;type:uuid"`
+	Name              string                                       `gorm:"type:varchar(255);not null;uniqueIndex:idx_action_name_language"`
+	Language          language_models.LanguageEnum                 `gorm:"type:action_language_enum;not null;uniqueIndex:idx_action_name_language"`
+	EventType         string                                       `gorm:"type:varchar(100);not null;index"`
+	DeliveryMethod    notification_models.ActionDeliveryMethodEnum `gorm:"type:action_delivery_method_enum;not null;index"`
+	ActionStatus      notification_models.ActionStatusEnum         `gorm:"type:action_status_enum;index;default:'inactive';not null"`
+	ActionPayload     database_models.JSONB                        `gorm:"type:jsonb;not null"`
+	TemplateID        uid.UID                                      `gorm:"type:uuid;not null;index"`
+	Template          Template                                     `gorm:"foreignKey:TemplateID"`
+	ConditionTemplate string                                       `gorm:"null"`
+}
+
+func (Action) TableName() string {
+	return "notification_actions"
+}

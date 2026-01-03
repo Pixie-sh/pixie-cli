@@ -1,0 +1,61 @@
+package authentication
+
+import (
+	"sync"
+
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/errors-go"
+
+	internaldi "{{.ModuleName}}/infra/di"
+	"{{.ModuleName}}/internal/domains/authentication/authentication_business_layer"
+	"{{.ModuleName}}/internal/domains/authentication/authentication_data_layer"
+	"{{.ModuleName}}/internal/domains/authentication/authentication_services"
+)
+
+var once sync.Once
+
+func Registry() {
+	once.Do(func() {
+		//data layers
+		errors.Must(di.RegisterConfiguration[*authentication_data_layer.AuthenticationDataLayerConfiguration](authentication_data_layer.RegistryAuthenticationDataLayerConfiguration, di.WithToken(internaldi.RegistryTokenAuthenticationDataLayer)))
+		errors.Must(di.Register[*authentication_data_layer.AuthenticationDataLayer](authentication_data_layer.RegistryAuthenticationDataLayer, di.WithToken(internaldi.RegistryTokenAuthenticationDataLayer)))
+
+		errors.Must(di.RegisterConfiguration[*authentication_data_layer.UserDataLayerConfiguration](authentication_data_layer.RegistryUserDataLayerConfiguration, di.WithToken(internaldi.RegistryTokenUserDataLayer)))
+		errors.Must(di.Register[*authentication_data_layer.UserDataLayer](authentication_data_layer.RegistryUserDataLayer, di.WithToken(internaldi.RegistryTokenUserDataLayer)))
+
+		errors.Must(di.RegisterConfiguration[*authentication_data_layer.PasswordDataLayerConfiguration](authentication_data_layer.RegistryPasswordDataLayerConfiguration, di.WithToken(internaldi.RegistryTokenPasswordDataLayer)))
+		errors.Must(di.Register[*authentication_data_layer.PasswordDataLayer](authentication_data_layer.RegistryPasswordDataLayer, di.WithToken(internaldi.RegistryTokenPasswordDataLayer)))
+
+		errors.Must(di.RegisterConfiguration[*authentication_data_layer.RegistrationDataLayerConfiguration](authentication_data_layer.RegistryRegistrationDataLayerConfiguration, di.WithToken(internaldi.RegistryTokenRegistrationDataLayer)))
+		errors.Must(di.Register[*authentication_data_layer.RegistrationDataLayer](authentication_data_layer.RegistryRegistrationDataLayer, di.WithToken(internaldi.RegistryTokenRegistrationDataLayer)))
+
+		errors.Must(di.RegisterConfiguration[*authentication_data_layer.OtpDataLayerConfiguration](authentication_data_layer.RegistryOtpDataLayerConfiguration, di.WithToken(internaldi.RegistryTokenOtpDataLayer)))
+		errors.Must(di.Register[*authentication_data_layer.OtpDataLayer](authentication_data_layer.RegistryOtpDataLayer, di.WithToken(internaldi.RegistryTokenOtpDataLayer)))
+
+		//business layers
+		errors.Must(di.RegisterConfiguration[*authentication_business_layer.AuthenticationBusinessLayerConfiguration](authentication_business_layer.RegistryAuthenticationBusinessLayerConfiguration, di.WithToken(internaldi.RegistryTokenAuthenticationBusinessLayer)))
+		errors.Must(di.Register[*authentication_business_layer.AuthenticationBusinessLayer](authentication_business_layer.RegistryAuthenticationBusinessLayer, di.WithToken(internaldi.RegistryTokenAuthenticationBusinessLayer)))
+
+		errors.Must(di.RegisterConfiguration[*authentication_business_layer.PasswordBusinessLayerConfiguration](authentication_business_layer.RegistryPasswordBusinessLayerConfiguration, di.WithToken(internaldi.RegistryTokenPasswordBusinessLayer)))
+		errors.Must(di.Register[*authentication_business_layer.PasswordBusinessLayer](authentication_business_layer.RegistryPasswordBusinessLayer, di.WithToken(internaldi.RegistryTokenPasswordBusinessLayer)))
+
+		errors.Must(di.RegisterConfiguration[*authentication_business_layer.RegistrationBusinessLayerConfiguration](authentication_business_layer.RegistryRegistrationBusinessLayerConfiguration, di.WithToken(internaldi.RegistryTokenRegistrationBusinessLayer)))
+		errors.Must(di.Register[*authentication_business_layer.RegistrationBusinessLayer](authentication_business_layer.RegistryRegistrationBusinessLayer, di.WithToken(internaldi.RegistryTokenRegistrationBusinessLayer)))
+
+		errors.Must(di.RegisterConfiguration[*authentication_business_layer.UserProfileBusinessLayerConfiguration](authentication_business_layer.RegistryUserProfileBusinessLayerConfiguration, di.WithToken(internaldi.RegistryTokenUserProfileBusinessLayer)))
+		errors.Must(di.Register[*authentication_business_layer.UserProfileBusinessLayer](authentication_business_layer.RegistryUserProfileBusinessLayer, di.WithToken(internaldi.RegistryTokenUserProfileBusinessLayer)))
+
+		//services
+		errors.Must(di.RegisterConfiguration[*authentication_services.LoginServiceConfiguration](authentication_services.RegistryLoginServiceConfiguration, di.WithToken(internaldi.RegistryTokenAuthenticationLoginService)))
+		errors.Must(di.Register[*authentication_services.LoginService](authentication_services.RegistryLoginService, di.WithToken(internaldi.RegistryTokenAuthenticationLoginService)))
+
+		errors.Must(di.RegisterConfiguration[*authentication_services.UserServiceConfiguration](authentication_services.RegistryUserServiceConfiguration, di.WithToken(internaldi.RegistryTokenUserService)))
+		errors.Must(di.Register[*authentication_services.UserService](authentication_services.RegistryUserService, di.WithToken(internaldi.RegistryTokenUserService)))
+
+		errors.Must(di.RegisterConfiguration[*authentication_services.PasswordServiceConfiguration](authentication_services.RegistryPasswordServiceConfiguration, di.WithToken(internaldi.RegistryTokenPasswordService)))
+		errors.Must(di.Register[*authentication_services.PasswordService](authentication_services.RegistryPasswordService, di.WithToken(internaldi.RegistryTokenPasswordService)))
+
+		errors.Must(di.RegisterConfiguration[*authentication_services.UserOtpServiceConfiguration](authentication_services.RegistryUserOtpServiceConfiguration, di.WithToken(internaldi.RegistryTokenUserOtpService)))
+		errors.Must(di.Register[*authentication_services.UserOtpService](authentication_services.RegistryUserOtpService, di.WithToken(internaldi.RegistryTokenUserOtpService)))
+	})
+}

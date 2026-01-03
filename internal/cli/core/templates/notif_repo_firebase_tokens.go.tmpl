@@ -1,0 +1,86 @@
+package notifications_repositories
+
+import (
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/database-helpers-go/database"
+
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer/notifications_entities"
+)
+
+// UserFirebaseTokenRepository handles database operations for Firebase tokens
+type UserFirebaseTokenRepository struct {
+	database.Repository[UserFirebaseTokenRepository]
+}
+
+// NewUserFirebaseTokenRepository creates a new UserFirebaseTokenRepository
+func NewUserFirebaseTokenRepository(db *database.DB) UserFirebaseTokenRepository {
+	return UserFirebaseTokenRepository{database.NewRepository(
+		db,
+		NewUserFirebaseTokenRepository,
+	)}
+}
+
+// GetFcmTokenByUserId returns a list of firebase tokens for the given user id
+func (r *UserFirebaseTokenRepository) GetFcmTokenByUserId(userID uid.UID) ([]string, error) {
+	var tokens []string
+	err := r.DB.Model(&notifications_entities.FirebaseToken{}).
+		Unscoped().
+		Select("fcm_token").
+		Where("user_id = ? AND status = ?", userID, notifications_entities.FirebaseTokenStatusActive).
+		Pluck("fcm_token", &tokens).Error
+
+	return tokens, err
+}
+
+// CreateFcmToken creates a new FCM token for a user
+func (r *UserFirebaseTokenRepository) CreateFcmToken(userID uid.UID, token string, status notifications_entities.FirebaseTokenStatus) (notifications_entities.FirebaseToken, error) {
+	fcmToken := notifications_entities.FirebaseToken{
+		UserID:   userID,
+		FcmToken: token,
+		Status:   status,
+	}
+
+	return fcmToken, r.DB.Model(&notifications_entities.FirebaseToken{}).Create(&fcmToken).Error
+}
+
+// UpdateFcmTokenStatus updates the status of an FCM token
+func (r *UserFirebaseTokenRepository) UpdateFcmTokenStatus(fcmTokenID uid.UID, status notifications_entities.FirebaseTokenStatus) (notifications_entities.FirebaseToken, error) {
+	updates := notifications_entities.FirebaseToken{
+		Status: status,
+	}
+
+	return updates, r.DB.Model(&notifications_entities.FirebaseToken{}).Where("id = ?", fcmTokenID).Updates(&updates).Error
+}
+
+// SetUserFcmTokensStatus sets the status of all FCM tokens for a user
+func (r *UserFirebaseTokenRepository) SetUserFcmTokensStatus(userID uid.UID, status notifications_entities.FirebaseTokenStatus) (notifications_entities.FirebaseToken, error) {
+	updates := notifications_entities.FirebaseToken{
+		Status: status,
+	}
+
+	return updates, r.DB.Model(&notifications_entities.FirebaseToken{}).Where("user_id = ? AND status != ?", userID, status).Updates(&updates).Error
+}
+
+// GetByUserIDAndToken retrieves an FCM token by user ID and token value
+func (r *UserFirebaseTokenRepository) GetByUserIDAndToken(userID uid.UID, token string) (notifications_entities.FirebaseToken, error) {
+	var tokens []notifications_entities.FirebaseToken
+	err := r.DB.Model(&notifications_entities.FirebaseToken{}).Where("fcm_token = ? AND user_id = ?", token, userID).Find(&tokens).Error
+	if err != nil {
+		return notifications_entities.FirebaseToken{}, err
+	}
+
+	if len(tokens) == 0 {
+		return notifications_entities.FirebaseToken{}, nil
+	}
+
+	return tokens[0], nil
+}
+
+// GetLatestActiveByUserID retrieves the latest active FCM token for a user
+func (r *UserFirebaseTokenRepository) GetLatestActiveByUserID(userID uid.UID) (fcmToken notifications_entities.FirebaseToken, err error) {
+	return fcmToken, r.DB.Model(&notifications_entities.FirebaseToken{}).
+		Where("user_id = ? and status = ?", userID, notifications_entities.FirebaseTokenStatusActive).
+		Order("created_at DESC").
+		First(&fcmToken).
+		Error
+}

@@ -1,0 +1,10 @@
+package {{.DomainName}}_migrations
+
+import (
+	"github.com/pixie-sh/database-helpers-go/database"
+)
+
+// Migrations reference it on `internal/domains/database_migrations.go`
+var Migrations = []*database.Migration{
+	&Create{{.DomainNameCamel}}Table{{.MigrationTimestamp}},
+}

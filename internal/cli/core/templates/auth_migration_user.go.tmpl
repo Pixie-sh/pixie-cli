@@ -1,0 +1,47 @@
+package auth_migrations
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/models/database_models"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"gorm.io/gorm"
+)
+
+type user{{ .MigrationTimestamp }}1 struct {
+	database_models.SoftDeletable
+
+	ID           uid.UID `gorm:"primary_key,type:uuid"`
+	EmailAddress string  `gorm:"type:text;uniqueIndex:idx_users_email"`
+	FullName     string  `gorm:"type:text"`
+	Password     string  `gorm:"type:text"`
+	UserType     string  `gorm:"type:user_type;default:'user'"`
+	Status       string  `gorm:"type:text"`
+
+	LastLogin time.Time
+	LastIp    string `gorm:"type:text"`
+}
+
+func (user{{ .MigrationTimestamp }}1) TableName() string {
+	return "users"
+}
+
+var CreateUserTable{{ .MigrationTimestamp }}1 = database.Migration{
+	ID: "{{ .MigrationTimestamp }}1_CreateUserTable",
+	Migrate: func(tx *gorm.DB) error {
+		if err := tx.Exec(`CREATE TYPE user_type AS ENUM ('user', 'superadmin')`).Error; err != nil {
+			return err
+		}
+
+		return tx.AutoMigrate(&user{{ .MigrationTimestamp }}1{})
+	},
+	Rollback: func(tx *gorm.DB) error {
+		// Drop the table first
+		if err := tx.Migrator().DropTable(&user{{ .MigrationTimestamp }}1{}); err != nil {
+			return err
+		}
+		// Then drop the ENUM type
+		return tx.Exec("DROP TYPE IF EXISTS user_type").Error
+	},
+}

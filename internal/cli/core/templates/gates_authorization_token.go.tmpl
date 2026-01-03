@@ -1,0 +1,67 @@
+package gates
+
+import (
+	"context"
+
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+	"github.com/pixie-sh/errors-go"
+)
+
+// AuthConfiguration configuration for API key authentication
+type AuthConfiguration struct {
+	Value  string `json:"value"`
+	Header string `json:"header"`
+}
+
+// AuthorizationToken is the authorization middleware that checks API key
+type AuthorizationToken struct {
+	expectedValue string
+	headerKey     string
+}
+
+// NewAuthorizationToken creates a new AuthorizationToken middleware
+// headerKey is the header key to search for the API key
+// expectedValue is the expected API key value
+func NewAuthorizationToken(_ context.Context, config AuthConfiguration) (AuthorizationToken, error) {
+	if config.Header == "" {
+		config.Header = "X-AuthKey"
+	}
+
+	if config.Value == "" || config.Header == "" {
+		return AuthorizationToken{}, errors.New(
+			"provided expectedValue(%s)/headerKey(%s) is empty. authentication token middleware not created",
+			config.Value,
+			config.Header).WithErrorCode(errors.ErrorCreatingDependencyErrorCode)
+	}
+
+	a := AuthorizationToken{expectedValue: config.Value, headerKey: config.Header}
+	return a, nil
+}
+
+// Validate validates the provided token against the expected value
+func (a AuthorizationToken) Validate(tknEvaluate string) error {
+	if len(tknEvaluate) > 0 && a.expectedValue == tknEvaluate {
+		return nil
+	}
+
+	return errors.New("invalid authorization token").WithErrorCode(errors.InvalidAuthTokenErrorCode)
+}
+
+// Has returns a middleware that validates the API key
+func (a AuthorizationToken) Has(c http.ServerCtx) error {
+	// try token from header first, then query string
+	tkn := c.Get(a.headerKey)
+	if tkn == "" {
+		tkn = c.Query(a.headerKey)
+	}
+
+	if len(tkn) == 0 {
+		return errors.New("not authenticated").WithErrorCode(errors.UnauthorizedErrorCode)
+	}
+
+	if err := a.Validate(tkn); err != nil {
+		return err
+	}
+
+	return c.Next()
+}

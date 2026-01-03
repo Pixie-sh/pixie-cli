@@ -1,0 +1,26 @@
+# Database Configuration
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_NAME={{.ProjectName}}_db
+DATABASE_USERNAME=postgres
+DATABASE_PASSWORD=password
+DATABASE_SSL_MODE=disable
+DATABASE_MAX_OPEN_CONNECTIONS=100
+DATABASE_MAX_IDLE_CONNECTIONS=10
+DATABASE_CONNECTION_MAX_LIFETIME=1h
+
+# Redis Configuration
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DATABASE=0
+
+# JWT Configuration
+JWT_SECRET_KEY=your-super-secret-key-change-in-production
+
+# API Key Configuration
+ADMIN_API_KEY=your-admin-api-key-change-in-production
+
+# Server Configuration
+SERVER_PORT=3000
+METRICS_PORT=3100

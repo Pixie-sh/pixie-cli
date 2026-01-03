@@ -1,0 +1,101 @@
+package notification_adapters
+
+import (
+	"github.com/pixie-sh/core-go/pkg/models/adapters"
+	"github.com/pixie-sh/core-go/pkg/models/database_models"
+	"github.com/pixie-sh/core-go/pkg/models/notification_models"
+	"github.com/pixie-sh/core-go/pkg/models/serializer"
+	"github.com/pixie-sh/core-go/pkg/types/slices"
+	"github.com/pixie-sh/database-helpers-go/pipeline/operators"
+	"github.com/pixie-sh/logger-go/logger"
+
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer/notifications_entities"
+)
+
+var _ adapters.Adapter[notifications_entities.ActivityLog, notification_models.NotificationActivityLog] = ActivityLogAdapter{}
+
+// ActivityLogAdapter adapts activity log entities to models
+type ActivityLogAdapter struct {
+	actionAdapter   ActionAdapter
+	templateAdapter TemplateAdapter
+}
+
+// NewActivityLogAdapter creates a new ActivityLogAdapter
+func NewActivityLogAdapter(actionAdapter ActionAdapter, templateAdapter TemplateAdapter) ActivityLogAdapter {
+	return ActivityLogAdapter{
+		actionAdapter:   actionAdapter,
+		templateAdapter: templateAdapter,
+	}
+}
+
+// Adapt converts an ActivityLog entity to a NotificationActivityLog model
+func (a ActivityLogAdapter) Adapt(action notifications_entities.ActivityLog) notification_models.NotificationActivityLog {
+	al := notification_models.NotificationActivityLog{
+		ID:          action.ID,
+		PublicToken: action.PublicToken,
+		ActionID:    action.ActionID,
+		TemplateID:  action.TemplateID,
+	}
+
+	if action.Action != nil {
+		al.Action = a.actionAdapter.Adapt(*action.Action)
+	}
+
+	if action.Template != nil {
+		al.Template = a.templateAdapter.Adapt(*action.Template)
+	}
+
+	var err error
+	al.Payload, err = a.PayloadFromJSONB(action.Payload)
+
+	if err != nil {
+		logger.Logger.With("error", err).With("payload", action.Payload).Error("error while converting payload to JSONB")
+		al.Payload = notification_models.NotificationActivityLogPayload{
+			AdditionalData: map[string]any{
+				"error":    err,
+				"raw_data": action.Payload,
+			},
+		}
+	}
+
+	return al
+}
+
+// AdaptCollection converts a collection of ActivityLog entities to models
+func (a ActivityLogAdapter) AdaptCollection(actions []notifications_entities.ActivityLog) []notification_models.NotificationActivityLog {
+	return slices.Map(actions, a.Adapt)
+}
+
+// PayloadFromJSONB converts a JSONB payload to NotificationActivityLogPayload
+func (a ActivityLogAdapter) PayloadFromJSONB(payload database_models.JSONB) (notification_models.NotificationActivityLogPayload, error) {
+	var p notification_models.NotificationActivityLogPayload
+	if err := serializer.ToStruct(payload, &p); err != nil {
+		return notification_models.NotificationActivityLogPayload{}, err
+	}
+
+	return p, nil
+}
+
+// AdaptToEntity converts a NotificationActivityLog model to an ActivityLog entity
+func (a ActivityLogAdapter) AdaptToEntity(log notification_models.NotificationActivityLog) notifications_entities.ActivityLog {
+	payload, err := serializer.ToJSONB(log.Payload)
+	if err != nil {
+		logger.Logger.With("error", err).With("payload", log.Payload).Error("error while converting payload to JSONB")
+	}
+
+	return notifications_entities.ActivityLog{
+		ID:          log.ID,
+		PublicToken: log.PublicToken,
+		ActionID:    log.ActionID,
+		TemplateID:  log.TemplateID,
+		Payload:     payload,
+	}
+}
+
+// AdaptPaginatedCollection converts a paginated collection of ActivityLog entities to models
+func (a ActivityLogAdapter) AdaptPaginatedCollection(records *operators.PaginatedResult[[]notifications_entities.ActivityLog]) operators.PaginatedResult[[]notification_models.NotificationActivityLog] {
+	return operators.PaginatedResult[[]notification_models.NotificationActivityLog]{
+		UntypedPaginatedResult: records.UntypedPaginatedResult,
+		Data:                   a.AdaptCollection(records.Data),
+	}
+}

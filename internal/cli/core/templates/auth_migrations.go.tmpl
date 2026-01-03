@@ -1,0 +1,11 @@
+package auth_migrations
+
+import (
+	"github.com/pixie-sh/database-helpers-go/database"
+)
+
+var Migrations = []*database.Migration{
+	&CreateUserTable{{ .MigrationTimestamp }}1,
+	&CreatePasswordResetTable{{ .MigrationTimestamp }}2,
+	&CreateUserOTPTable{{ .MigrationTimestamp }}3,
+}

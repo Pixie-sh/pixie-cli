@@ -1,0 +1,178 @@
+package session_manager_models
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/models/serializer"
+	"github.com/pixie-sh/core-go/pkg/types"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/errors-go"
+)
+
+// SuperadminRoleFeature constant for superadmin role
+const SuperadminRoleFeature = "superadmin"
+
+// Session payload type registrations
+var (
+	UserSessionModelPayloadType  = types.PayloadTypeOf[UserSession]()
+	AdminSessionModelPayloadType = types.PayloadTypeOf[AdminSession]()
+)
+
+// SessionChannel represents the channel from which the session originated
+type SessionChannel string
+
+func (s SessionChannel) String() string {
+	return string(s)
+}
+
+const (
+	UnknownAppSessionChannel SessionChannel = "unknown"
+	MobileAppSessionChannel  SessionChannel = "mobile_app"
+	WebAppSessionChannel     SessionChannel = "web_app"
+	BackOfficeSessionChannel SessionChannel = "bo_web_app"
+)
+
+var SessionChannelList = []SessionChannel{
+	MobileAppSessionChannel,
+	BackOfficeSessionChannel,
+	WebAppSessionChannel,
+}
+
+// JWT represents a JWT token payload
+type JWT struct {
+	SessionID  string      `json:"session_id"`
+	User       JWTUser     `json:"user"`
+	Entities   []JWTEntity `json:"entities"`
+	Roles      []string    `json:"roles"`
+	Features   []string    `json:"features"`
+	Version    float32     `json:"version"`
+	EncodedJWT string      `json:"-"` // not serialized, use with caution
+}
+
+// JWTEntity represents an entity associated with the JWT
+type JWTEntity struct {
+	EntityType string `json:"entity_type"`
+	EntityID   string `json:"entity_id,omitempty"`
+	Status     string `json:"status"`
+}
+
+// JWTUser represents user information in the JWT
+type JWTUser struct {
+	ID        uid.UID        `json:"id"`
+	Email     string         `json:"email"`
+	Status    string         `json:"status"`
+	IP        string         `json:"ip"`
+	CreatedAt time.Time      `json:"created_at"`
+	Channel   SessionChannel `json:"channel"`
+}
+
+// GetEntityID retrieves the entity ID for a given entity type
+func (j JWT) GetEntityID(entityType string) (string, error) {
+	return j.getEntityID(entityType, false)
+}
+
+func (j JWT) getEntityID(entityType string, recursion bool) (string, error) {
+	switch entityType {
+	case SuperadminRoleFeature:
+		return "", errors.New("there's no available entity id for %s", entityType).WithErrorCode(errors.InvalidFormDataCode)
+	default:
+		for _, entity := range j.Entities {
+			if entity.EntityType == entityType {
+				return entity.EntityID, nil
+			}
+		}
+
+		if !recursion {
+			switch entityType {
+			case "user":
+				return j.getEntityID("user", true)
+			case "admin":
+				return j.getEntityID("admin", true)
+			}
+		}
+
+		return "", errors.New("there is no entity for %s", entityType).WithErrorCode(errors.InvalidFormDataCode)
+	}
+}
+
+// UntypedSession is the serializable version of a session
+type UntypedSession struct {
+	SessionID      uid.UID           `json:"session_id"`
+	UserID         uid.UID           `json:"user_id"`
+	Channel        SessionChannel    `json:"channel"`
+	UpdatedAt      time.Time         `json:"updated_at"`
+	SessionType    types.PayloadType `json:"session_type"`
+	SessionPayload any               `json:"session_payload"`
+}
+
+// Session is the typed in-memory session
+type Session[T UserSession | AdminSession] struct {
+	UntypedSession
+	SessionPayload *T `json:"session_payload"`
+}
+
+// UserSession represents a regular user session payload
+type UserSession struct {
+	// Add your user-specific session fields here
+	// Example: PartnerID string `json:"partner_id"`
+}
+
+// AdminSession represents an admin user session payload
+type AdminSession struct {
+	// Add your admin-specific session fields here
+	// Example: AdminPartnerID string `json:"admin_partner_id,omitempty"`
+}
+
+// MarshalJSON custom JSON marshaling for UntypedSession
+func (u UntypedSession) MarshalJSON() ([]byte, error) {
+	type alias UntypedSession
+	return serializer.Serialize(&struct {
+		*alias
+		SessionPayload any `json:"session_payload,omitempty"`
+	}{
+		alias:          (*alias)(&u),
+		SessionPayload: u.SessionPayload,
+	})
+}
+
+// UnmarshalJSON custom JSON unmarshaling for UntypedSession
+func (u *UntypedSession) UnmarshalJSON(data []byte) error {
+	type alias UntypedSession
+	var err error
+	var aux = struct {
+		alias
+		SessionPayload serializer.Raw `json:"session_payload,omitempty"`
+	}{
+		alias:          (alias)(UntypedSession{}),
+		SessionPayload: make(serializer.Raw, 0),
+	}
+
+	if err = serializer.Deserialize(data, &aux); err != nil {
+		return errors.NewWithError(err, "failed to unmarshal UntypedSession")
+	}
+
+	u.SessionID = aux.SessionID
+	u.UserID = aux.UserID
+	u.Channel = aux.Channel
+	u.UpdatedAt = aux.UpdatedAt
+	u.SessionType = aux.SessionType
+
+	switch aux.SessionType {
+	case AdminSessionModelPayloadType:
+		casted, err := serializer.FromAny[AdminSession](aux.SessionPayload)
+		if err != nil {
+			return err
+		}
+		u.SessionPayload = &casted
+	case UserSessionModelPayloadType:
+		casted, err := serializer.FromAny[UserSession](aux.SessionPayload)
+		if err != nil {
+			return err
+		}
+		u.SessionPayload = &casted
+	default:
+		return errors.New("unknown UntypedSession.SessionType: %v", aux.SessionType)
+	}
+
+	return nil
+}

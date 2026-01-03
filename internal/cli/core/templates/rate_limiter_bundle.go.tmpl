@@ -1,0 +1,67 @@
+package bundles
+
+import (
+	"context"
+
+	"github.com/pixie-sh/core-go/infra/cache"
+	"github.com/pixie-sh/core-go/infra/rate_limiter"
+	"github.com/pixie-sh/di-go"
+)
+
+type RateLimiterBundleConfiguration struct {
+	RateLimiterConfig      rate_limiter.RateLimiterConfiguration `json:"rate_limiter"`
+	RateLimiterCacheConfig cache.RedisCacheConfiguration         `json:"rate_limiter_cache"`
+}
+
+func (r RateLimiterBundleConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(r, lookupPath)
+}
+
+type RateLimiterBundle struct {
+	RateLimiter *rate_limiter.RateLimiter
+	Cache       cache.Cache
+}
+
+func RegistryRateLimiterBundleConfiguration(ctx di.Context, opts *di.RegistryOpts) (*RateLimiterBundleConfiguration, error) {
+	return di.ConfigurationLookup[*RateLimiterBundleConfiguration](ctx, opts)
+}
+
+func RegistryRateLimiterBundle(ctx di.Context, opts *di.RegistryOpts) (*RateLimiterBundle, error) {
+	cfg, err := di.CreateConfiguration[*RateLimiterBundleConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	redisCache, rateLimiter, err := NewRateLimiter(ctx, *cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RateLimiterBundle{
+		RateLimiter: rateLimiter,
+		Cache:       redisCache,
+	}, nil
+}
+
+func NewRateLimiter(ctx context.Context, config RateLimiterBundleConfiguration) (*cache.RedisCache, *rate_limiter.RateLimiter, error) {
+	redisCache, err := cache.NewRedisCache(ctx, config.RateLimiterCacheConfig)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	rateLimiter, err := rate_limiter.NewRateLimiter(redisCache, config.RateLimiterConfig)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return redisCache, rateLimiter, nil
+}
+
+func NewRateLimiterWithCache(_ context.Context, config RateLimiterBundleConfiguration, redisCache cache.Cache) (cache.Cache, *rate_limiter.RateLimiter, error) {
+	rateLimiter, err := rate_limiter.NewRateLimiter(redisCache, config.RateLimiterConfig)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return redisCache, rateLimiter, nil
+}

@@ -1,0 +1,14 @@
+package main
+
+import (
+	"context"
+
+	"github.com/pixie-sh/core-go/pkg/microservice"
+
+	"{{.ModuleName}}/internal/ms/ms_{{.ServiceName}}"
+)
+
+func main() {
+	bootstrap := microservice.BootstrapMust[*ms_{{.ServiceName}}.{{.ServiceNameCamel}}Microservice, *ms_{{.ServiceName}}.{{.ServiceNameCamel}}MicroserviceConfiguration](context.Background())
+	bootstrap.Start()
+}

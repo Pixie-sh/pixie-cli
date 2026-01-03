@@ -1,0 +1,192 @@
+package ms_{{.ServiceName}}
+
+import (
+	"context"
+
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+	"github.com/pixie-sh/core-go/pkg/metrics"
+	"github.com/pixie-sh/core-go/pkg/microservice"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/logger-go/logger"
+
+	"{{.ModuleName}}/bundles"
+	internaldi "{{.ModuleName}}/infra/di"
+	"{{.ModuleName}}/infra/message_packs"
+	"{{.ModuleName}}/internal/domains/{{.DomainName}}/{{.DomainName}}_business_layer"
+)
+
+// compiler trick: force to comply with interfaces
+var _ microservice.Starter = &{{.ServiceNameCamel}}Microservice{}
+var _ di.Configuration = &{{.ServiceNameCamel}}MicroserviceConfiguration{}
+
+type {{.ServiceNameCamel}}MicroserviceConfiguration struct {
+	{{- if .Features.tokens}}
+	bundles.TokenServicesBundleConfiguration                         `json:"token_services_bundle"`
+	{{- end}}
+	{{- if .Features.auth}}
+	bundles.AuthorizationGatesBundleConfiguration                    `json:"authorization_gates_bundle"`
+	{{- end}}
+	bundles.HttpServerBundleConfigurations                           `json:"http_server_bundle"`
+	{{.DomainName}}_business_layer.{{.DomainNameCamel}}BusinessLayerConfiguration `json:"{{.DomainName}}_business_layer"`
+
+	ListenAddr        string `json:"listen_addr"`
+	ListenMetricsAddr string `json:"listen_metrics_addr"`
+}
+
+func (p *{{.ServiceNameCamel}}MicroserviceConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(p, lookupPath)
+}
+
+type {{.ServiceNameCamel}}Microservice struct {
+	ctx context.Context
+
+	//from di
+	configuration *{{.ServiceNameCamel}}MicroserviceConfiguration
+	server        http.Server
+	metricsServer http.Server
+	businessLayer *{{.DomainName}}_business_layer.{{.DomainNameCamel}}BusinessLayer
+	{{- if .Features.auth}}
+	gates         *bundles.AuthorizationGatesBundle
+	{{- end}}
+
+	//non di
+	controllers   httpControllers
+	{{- if .Features.backoffice}}
+	boControllers httpBoControllers
+	{{- end}}
+}
+
+func Registry{{.ServiceNameCamel}}MicroserviceConfiguration(dictx di.Context, opts *di.RegistryOpts) (*{{.ServiceNameCamel}}MicroserviceConfiguration, error) {
+	return di.ConfigurationLookup[*{{.ServiceNameCamel}}MicroserviceConfiguration](dictx, opts)
+}
+
+func Registry{{.ServiceNameCamel}}Microservice(ctx di.Context, opts *di.RegistryOpts) (*{{.ServiceNameCamel}}Microservice, error) {
+	cfg, err := di.CreateConfiguration[*{{.ServiceNameCamel}}MicroserviceConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	{{- if .Features.validation}}
+	_, err = di.Create[*bundles.ValidationsBundle](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenClassValidators))
+	if err != nil {
+		return nil, err
+	}
+	{{- end}}
+
+	{{- if .Features.tokens}}
+	_, err = di.Create[*bundles.TokenServicesBundle](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenTokenServicesBundle))
+	if err != nil {
+		return nil, err
+	}
+	{{- end}}
+
+	serverBundle, err := di.Create[*bundles.HttpServerBundle](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenHTTPServerBundle))
+	if err != nil {
+		return nil, err
+	}
+
+	businessLayer, err := di.Create[*{{.DomainName}}_business_layer.{{.DomainNameCamel}}BusinessLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryToken{{.DomainNameCamel}}BusinessLayer))
+	if err != nil {
+		return nil, err
+	}
+
+	{{- if .Features.auth}}
+	gates, err := di.Create[*bundles.AuthorizationGatesBundle](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenAuthorizationGatesBundle))
+	if err != nil {
+		return nil, err
+	}
+	{{- end}}
+
+	return New{{.ServiceNameCamel}}Microservice(
+		ctx,
+		cfg,
+		serverBundle,
+		businessLayer,
+		{{- if .Features.auth}}
+		gates,
+		{{- end}}
+	)
+}
+
+func New{{.ServiceNameCamel}}Microservice(
+	ctx context.Context,
+	cfg *{{.ServiceNameCamel}}MicroserviceConfiguration,
+	bundle *bundles.HttpServerBundle,
+	layer *{{.DomainName}}_business_layer.{{.DomainNameCamel}}BusinessLayer,
+	{{- if .Features.auth}}
+	gates *bundles.AuthorizationGatesBundle,
+	{{- end}}
+) (*{{.ServiceNameCamel}}Microservice, error) {
+	ms := &{{.ServiceNameCamel}}Microservice{
+        ctx,
+        cfg,
+        bundle.Server,
+        bundle.MetricsServer,
+        layer,
+		{{- if .Features.auth}}
+        gates,
+		{{- end}}
+        httpControllers{
+            bundle.Server,
+            {{- if .Features.auth}}
+            gates,
+            {{- end}}
+            layer,
+        },
+        {{- if .Features.backoffice}}
+        httpBoControllers{
+            bundle.Server,
+            {{- if .Features.auth}}
+            gates,
+            {{- end}}
+            layer,
+        }
+        {{- end}}
+	}
+
+	return ms, ms.Setup()
+}
+
+func (m *{{.ServiceNameCamel}}Microservice) Setup() error {
+	err := m.Valid()
+	if err != nil {
+		return err
+	}
+
+    //register other singletons here
+	message_packs.Register(m.ctx)
+
+	err = m.controllers.SetupHTTP()
+	if err != nil {
+		return err
+	}
+
+	{{- if .Features.backoffice}}
+	return m.boControllers.SetupHTTP()
+	{{- else}}
+	return nil
+	{{- end}}
+}
+
+func (m *{{.ServiceNameCamel}}Microservice) PanicHandler() {
+	microservice.PanicHandler()
+}
+
+func (m *{{.ServiceNameCamel}}Microservice) Defer() {
+	metrics.Defer(m.ctx)
+}
+
+func (m *{{.ServiceNameCamel}}Microservice) Start() error {
+	go func() {
+		err := m.metricsServer.Listen(m.configuration.ListenMetricsAddr)
+		if err != nil {
+			logger.With("error", err).Error("unable to start metrics server")
+		}
+	}()
+
+	return m.server.Listen(m.configuration.ListenAddr)
+}
+
+func (m *{{.ServiceNameCamel}}Microservice) Valid() error {
+	return nil
+}

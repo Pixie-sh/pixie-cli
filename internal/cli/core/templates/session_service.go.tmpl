@@ -1,0 +1,131 @@
+package session_manager
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/pixie-sh/core-go/infra/cache"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/models/serializer"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/errors-go"
+
+	"{{ .ModuleName }}/infra/uidgen"
+	"{{ .ModuleName }}/pkg/models/session_manager_models"
+)
+
+// SessionService handles session operations
+type SessionService struct {
+	config SessionServiceConfiguration
+	cache  cache.Cache
+}
+
+// NewSessionService creates a new session service
+func NewSessionService(_ context.Context, config SessionServiceConfiguration, cache cache.Cache) SessionService {
+	return SessionService{
+		config: config,
+		cache:  cache,
+	}
+}
+
+func (s SessionService) generateSession(ctx context.Context, userID uid.UID, channel session_manager_models.SessionChannel) session_manager_models.UntypedSession {
+	var session session_manager_models.UntypedSession
+	session.SessionID = uidgen.UserSession()
+	session.UserID = userID
+	session.Channel = channel
+	session.UpdatedAt = time.Now().UTC()
+
+	return session
+}
+
+func (s SessionService) batchModelsSession(blob []byte, session session_manager_models.UntypedSession, sessionTTL time.Duration) []cache.BatchSetExModel {
+	return []cache.BatchSetExModel{
+		{
+			Key:      fmt.Sprintf(CacheUserSessionIDTemplate, session.SessionID.String()),
+			Value:    blob,
+			Duration: &sessionTTL,
+		},
+		{
+			Key:      fmt.Sprintf(CacheUserIDUserSessionIDTemplate, session.UserID, session.SessionID.String()),
+			Value:    blob,
+			Duration: &sessionTTL,
+		},
+	}
+}
+
+// FetchFromCacheByJWT retrieves a session from cache by the encoded JWT string
+func (s SessionService) FetchFromCacheByJWT(ctx context.Context, jwtToRefresh string) (session_manager_models.UntypedSession, error) {
+	var session session_manager_models.UntypedSession
+
+	sessionBytes, err := s.cache.Get(ctx, fmt.Sprintf(CacheJWTUserSessionTemplate, jwtToRefresh))
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).With("error", err).Error("unable to get session from cache")
+		return session, err
+	}
+
+	err = serializer.Deserialize(sessionBytes, &session)
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).With("error", err).Error("unable to deserialize session from cache")
+		return session, errors.New("unable to fetch session from cache")
+	}
+
+	return session, nil
+}
+
+func (s SessionService) delete(ctx context.Context, userID uid.UID, sessionID uid.UID) error {
+	err := s.cache.Delete(ctx, fmt.Sprintf(CacheUserSessionIDTemplate, sessionID.String()))
+	if err != nil {
+		return err
+	}
+
+	err = s.cache.Delete(ctx, fmt.Sprintf(CacheUserIDUserSessionIDTemplate, userID, sessionID.String()))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ExistsInCacheByJWT checks if a session exists in the cache by JWT
+func (s SessionService) ExistsInCacheByJWT(ctx context.Context, jwtEncoded string) bool {
+	return s.cache.Peek(ctx, fmt.Sprintf(CacheJWTUserSessionTemplate, jwtEncoded)) == nil
+}
+
+// FetchFromCacheByID retrieves a session from cache by its ID
+func (s SessionService) FetchFromCacheByID(ctx context.Context, id uid.UID) (session_manager_models.UntypedSession, error) {
+	var session session_manager_models.UntypedSession
+
+	sessionBytes, err := s.cache.Get(ctx, fmt.Sprintf(CacheUserSessionIDTemplate, id))
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).With("error", err).Error("unable to get session from cache")
+		return session, err
+	}
+
+	err = serializer.Deserialize(sessionBytes, &session)
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).With("error", err).Error("unable to deserialize session from cache")
+		return session, errors.New("unable to fetch session from cache")
+	}
+
+	return session, nil
+}
+
+// ExpiresLT checks if the session expires within the given duration
+func (s SessionService) ExpiresLT(ctx context.Context, jwtString string, expiresIn time.Duration) (bool, error) {
+	cacheExpiresIn, err := s.cache.TTL(ctx, fmt.Sprintf(CacheJWTSessionIDTemplate, jwtString))
+	if err != nil {
+		return false, err
+	}
+	return cacheExpiresIn <= expiresIn, nil
+}
+
+// ExpiresInByJWT returns the remaining TTL for a session by JWT
+func (s SessionService) ExpiresInByJWT(ctx context.Context, jwtString string) (time.Duration, error) {
+	return s.cache.TTL(ctx, fmt.Sprintf(CacheJWTSessionIDTemplate, jwtString))
+}
+
+// ExpiresIn returns the remaining TTL for a session by session ID
+func (s SessionService) ExpiresIn(ctx context.Context, sessionID uid.UID) (time.Duration, error) {
+	return s.cache.TTL(ctx, fmt.Sprintf(CacheUserSessionIDTemplate, sessionID))
+}

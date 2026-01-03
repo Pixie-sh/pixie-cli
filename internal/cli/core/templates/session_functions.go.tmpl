@@ -1,0 +1,67 @@
+package session_manager
+
+import (
+	"context"
+
+	"{{ .ModuleName }}/pkg/models/session_manager_models"
+)
+
+// GetSessions retrieves all sessions from cache
+func GetSessions(ctx context.Context, customSessionManager ...*SessionManager) (any, error) {
+	return GetManager(customSessionManager...).jwtService.GetSessions(ctx)
+}
+
+// DeleteSession deletes a session by JWT session ID
+func DeleteSession(ctx context.Context, jwtSessionID string, customSessionManager ...*SessionManager) error {
+	return GetManager(customSessionManager...).jwtService.DeleteJWT(ctx, jwtSessionID)
+}
+
+// GenerateAdminSessionFromJWT creates an admin session from a JWT
+func GenerateAdminSessionFromJWT(
+	ctx context.Context,
+	jwt session_manager_models.JWT,
+	customSessionManager ...*SessionManager,
+) session_manager_models.Session[session_manager_models.AdminSession] {
+	manager := GetManager(customSessionManager...)
+	absSession := manager.sessionService.generateSession(ctx, jwt.User.ID, jwt.User.Channel)
+	absSession.SessionType = session_manager_models.AdminSessionModelPayloadType
+	absSession.SessionPayload = &session_manager_models.AdminSession{}
+
+	usm := session_manager_models.Session[session_manager_models.AdminSession]{
+		UntypedSession: absSession,
+		SessionPayload: absSession.SessionPayload.(*session_manager_models.AdminSession),
+	}
+	// Add any admin-specific entity ID extraction here if needed
+	// usm.SessionPayload.AdminPartnerID, _ = jwt.GetEntityID("Vendor")
+
+	return usm
+}
+
+// GenerateUserSessionFromJWT creates a user session from a JWT
+func GenerateUserSessionFromJWT(
+	ctx context.Context,
+	jwt session_manager_models.JWT,
+	customSessionManager ...*SessionManager,
+) session_manager_models.Session[session_manager_models.UserSession] {
+	manager := GetManager(customSessionManager...)
+	absSession := manager.sessionService.generateSession(ctx, jwt.User.ID, jwt.User.Channel)
+	absSession.SessionType = session_manager_models.UserSessionModelPayloadType
+	absSession.SessionPayload = &session_manager_models.UserSession{}
+
+	usm := session_manager_models.Session[session_manager_models.UserSession]{
+		UntypedSession: absSession,
+		SessionPayload: absSession.SessionPayload.(*session_manager_models.UserSession),
+	}
+	// Add any user-specific entity ID extraction here if needed
+	// usm.SessionPayload.PartnerID, _ = jwt.GetEntityID("Vendor")
+
+	return usm
+}
+
+// Session converts an UntypedSession to a typed Session
+func Session[T session_manager_models.UserSession | session_manager_models.AdminSession](_ context.Context, abs session_manager_models.UntypedSession) session_manager_models.Session[T] {
+	return session_manager_models.Session[T]{
+		UntypedSession: abs,
+		SessionPayload: abs.SessionPayload.(*T),
+	}
+}

@@ -1,0 +1,19 @@
+module {{.ModuleName}}
+
+go 1.24
+
+require (
+	github.com/gofiber/fiber/v2 v2.52.9
+	github.com/golang-jwt/jwt/v5 v5.3.0
+	github.com/pixie-sh/core-go v0.2.2
+	github.com/pixie-sh/database-helpers-go v0.2.19
+	github.com/pixie-sh/di-go v0.2.4
+	github.com/pixie-sh/errors-go v0.3.7
+	github.com/pixie-sh/logger-go v0.4.4
+	github.com/spf13/cobra v1.10.1
+	github.com/stretchr/testify v1.11.1
+	golang.org/x/crypto v0.43.0
+	gorm.io/gorm v1.31.0
+)
+
+replace github.com/mitchellh/mapstructure => github.com/rsnullptr/mapstructure v1.5.0

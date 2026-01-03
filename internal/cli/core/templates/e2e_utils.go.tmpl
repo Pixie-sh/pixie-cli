@@ -1,0 +1,67 @@
+package e2e_utils
+
+import (
+	"fmt"
+	"os/exec"
+	"runtime"
+	"strconv"
+	"strings"
+)
+
+// KillProcessOnPort kills any process running on the specified port
+func KillProcessOnPort(port uint32) error {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "darwin", "linux":
+		// Find process on port
+		findCmd := exec.Command("lsof", "-t", fmt.Sprintf("-i:%d", port))
+		output, err := findCmd.Output()
+		if err != nil {
+			// No process found on port, which is fine
+			return nil
+		}
+
+		pids := strings.TrimSpace(string(output))
+		if pids == "" {
+			return nil
+		}
+
+		// Kill each process
+		for _, pid := range strings.Split(pids, "\n") {
+			pid = strings.TrimSpace(pid)
+			if pid == "" {
+				continue
+			}
+			pidInt, err := strconv.Atoi(pid)
+			if err != nil {
+				continue
+			}
+			cmd = exec.Command("kill", "-9", strconv.Itoa(pidInt))
+			cmd.Run() // Ignore errors, process might already be dead
+		}
+
+	case "windows":
+		// Windows: use netstat to find PID and taskkill to kill it
+		findCmd := exec.Command("cmd", "/c", fmt.Sprintf("netstat -ano | findstr :%d", port))
+		output, err := findCmd.Output()
+		if err != nil {
+			return nil
+		}
+
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			if len(fields) >= 5 {
+				pid := fields[len(fields)-1]
+				cmd = exec.Command("taskkill", "/F", "/PID", pid)
+				cmd.Run()
+			}
+		}
+
+	default:
+		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+	}
+
+	return nil
+}

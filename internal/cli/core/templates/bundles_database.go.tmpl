@@ -1,0 +1,46 @@
+package bundles
+
+import (
+	"github.com/pixie-sh/database-helpers-go/database"
+	"github.com/pixie-sh/di-go"
+)
+
+// DatabaseORM wraps the database ORM instance
+type DatabaseORM struct {
+	*database.Orm
+}
+
+// DatabaseORMConfiguration holds database configuration
+type DatabaseORMConfiguration struct {
+	database.Configuration
+}
+
+// LookupNode implements di.ConfigurationLookup interface
+func (d DatabaseORMConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(d, lookupPath)
+}
+
+// RegistryDatabaseORMConfiguration creates a DatabaseORMConfiguration from DI context
+func RegistryDatabaseORMConfiguration(context di.Context, opts *di.RegistryOpts) (*DatabaseORMConfiguration, error) {
+	node, err := di.ConfigurationLookup[*DatabaseORMConfiguration](context, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return node, nil
+}
+
+// RegistryDatabaseORM creates a DatabaseORM from DI context
+func RegistryDatabaseORM(context di.Context, opts *di.RegistryOpts) (*DatabaseORM, error) {
+	cfg, err := di.CreateConfiguration[*DatabaseORMConfiguration](context, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	orm, err := database.FactoryInstance.Create(context, &cfg.Configuration)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DatabaseORM{orm}, nil
+}

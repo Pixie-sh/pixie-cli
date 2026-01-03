@@ -1,0 +1,170 @@
+package authentication_services
+
+import (
+	"context"
+
+	"github.com/pixie-sh/core-go/infra/state_machine"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/errors/db_errors"
+	"github.com/pixie-sh/core-go/pkg/services"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/di-go"
+	"golang.org/x/crypto/bcrypt"
+
+	"{{ .ModuleName }}/infra/uidgen"
+
+	internaldi "{{ .ModuleName }}/infra/di"
+	data "{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_entities"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_repositories"
+)
+
+type UserServiceConfiguration struct {
+	UserDataLayerConfiguration data.UserDataLayerConfiguration `json:"user_data_layer"`
+}
+
+func (u UserServiceConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(u, lookupPath)
+}
+
+type UserService struct {
+	services.Service[UserService]
+
+	config    *UserServiceConfiguration
+	dataLayer *data.UserDataLayer
+}
+
+func RegistryUserServiceConfiguration(ctx di.Context, opts *di.RegistryOpts) (*UserServiceConfiguration, error) {
+	return di.ConfigurationLookup[*UserServiceConfiguration](ctx, opts)
+}
+
+func RegistryUserService(ctx di.Context, opts *di.RegistryOpts) (*UserService, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	cfg, err := di.CreateConfiguration[*UserServiceConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	userDataLayer, err := di.Create[*data.UserDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenUserDataLayer))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenUserDataLayer, internaldi.RegistryTokenUserService)
+		return nil, err
+	}
+
+	return NewUserService(ctx, cfg, userDataLayer)
+}
+
+func NewUserService(_ context.Context, config *UserServiceConfiguration, dataLayer *data.UserDataLayer) (*UserService, error) {
+	us := UserService{}
+	us.Service = services.NewService(&us, NewUserServiceFrom)
+	us.config = config
+	us.dataLayer = dataLayer
+
+	return &us, nil
+}
+
+func NewUserServiceFrom(service services.Service[UserService]) (*UserService, *services.Service[UserService]) {
+	us := &UserService{}
+	us.config = service.Instance.config
+	us.dataLayer = service.Instance.dataLayer
+	us.Service = services.NewService(us, nil)
+
+	return us, &us.Service
+}
+
+func (l UserService) CreateUser(_ context.Context, fullname string, email string, password string, userType auth_entities.UserTypeEnum, ip string) (auth_entities.User, error) {
+	repo := l.dataLayer.UserRepository.WithTx(l.Tx)
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return auth_entities.User{}, err
+	}
+
+	user := auth_entities.User{
+		ID:           uidgen.User(),
+		FullName:     fullname,
+		EmailAddress: email,
+		Password:     string(hashedPassword),
+		UserType:     userType,
+		LastIp:       ip,
+	}
+
+	err = repo.Save(&user).Error
+	if err != nil {
+		return auth_entities.User{}, db_errors.Handle(err)
+	}
+
+	return user, nil
+}
+
+func (l UserService) GetByID(_ context.Context, userID uid.UID) (user auth_entities.User, e error) {
+	return l.dataLayer.UserRepository.WithTx(l.Tx).FindUserByID(userID)
+}
+
+func (l UserService) UpdateUserPassword(_ context.Context, userID uid.UID, newPassword string) error {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	repo := l.dataLayer.UserRepository
+	if !l.TxNil() {
+		repo = l.dataLayer.UserRepository.WithTx(l.Tx)
+	}
+
+	return repo.Model(&auth_entities.User{}).Where("id = ?", userID).Update("password", hashedPassword).Error
+}
+
+func (l UserService) UpdateUserFieldsByID(_ context.Context, userID uid.UID, fieldName string, fieldValue any) error {
+	repo := l.dataLayer.UserRepository.WithTx(l.Tx)
+	return repo.Model(auth_entities.User{}).Where("id = ?", userID).Update(fieldName, fieldValue).Error
+}
+
+func (l UserService) UpdateUserProfile(_ context.Context, userID uid.UID, updates map[string]interface{}) error {
+	repo := l.dataLayer.UserRepository.WithTx(l.Tx)
+	return repo.Model(&auth_entities.User{}).Where("id = ?", userID).Updates(updates).Error
+}
+
+func (l UserService) DeleteUser(_ context.Context, userID uid.UID) error {
+	repo := l.dataLayer.UserRepository.WithTx(l.Tx)
+	return repo.Model(&auth_entities.User{}).Where("id = ?", userID).Delete(&auth_entities.User{}).Error
+}
+
+func (l UserService) GetByEmail(_ context.Context, email string) (auth_entities.User, error) {
+	repo := l.dataLayer.UserRepository.WithTx(l.Tx)
+	return repo.FindUserByEmail(email)
+}
+
+func (l UserService) WithStateMachineStorage() state_machine.StateMachineStorage {
+	return l.dataLayer.StateMachineRepo.WithTx(l.Tx)
+}
+
+func (l UserService) WithStateMachineEntityStorage(ctx context.Context, userID uid.UID) state_machine.StateMachineEntityStorage {
+	return newUserStateMachineEntity(
+		ctx,
+		userID,
+		l.dataLayer.UserRepository.WithTx(l.Tx),
+	)
+}
+
+type userStateMachineEntity struct {
+	id       uid.UID
+	userRepo auth_repositories.UserRepository
+}
+
+func newUserStateMachineEntity(
+	_ context.Context,
+	id uid.UID,
+	userRepo auth_repositories.UserRepository,
+) userStateMachineEntity {
+	return userStateMachineEntity{
+		id:       id,
+		userRepo: userRepo,
+	}
+}
+
+func (e userStateMachineEntity) StoreCurrentState(state state_machine.State) error {
+	pixiecontext.GetCtxLogger(context.TODO()).With("userID", e.id).With("state", state).Debug("storing current state for user")
+	return e.userRepo.UpdateStatus(e.id, state)
+}

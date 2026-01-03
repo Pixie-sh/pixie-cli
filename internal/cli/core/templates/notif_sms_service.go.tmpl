@@ -1,0 +1,159 @@
+package notifications_services
+
+import (
+	"context"
+	goErrors "errors"
+	"strconv"
+
+	messagebird "github.com/messagebird/go-rest-api/v9"
+	"github.com/messagebird/go-rest-api/v9/balance"
+	"github.com/messagebird/go-rest-api/v9/sms"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/models/notification_models"
+	"github.com/pixie-sh/core-go/pkg/types"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/errors-go"
+	"github.com/pixie-sh/logger-go/logger"
+)
+
+// SMS is an alias for the sms.Message type
+type SMS = sms.Message
+
+// SMSService is an interface that defines methods for sending SMS messages
+type SMSService interface {
+	Send(phoneNumber string, message string, msgParams *notification_models.SMSParams) (*SMS, error)
+}
+
+// MessagebirdSmsServiceConfiguration contains the configuration for the MessageBird SMS service
+type MessagebirdSmsServiceConfiguration struct {
+	SmsSecretKey  string `json:"messagebird_api_key"`
+	SmsOriginator string `json:"sms_originator"`
+}
+
+// MessagebirdSmsService implements SMSService using MessageBird
+type MessagebirdSmsService struct {
+	config            *MessagebirdSmsServiceConfiguration
+	messageBirdClient *messagebird.DefaultClient
+}
+
+// NewMessagebirdSmsService creates a new MessagebirdSmsService
+func NewMessagebirdSmsService(_ context.Context, config *MessagebirdSmsServiceConfiguration) (*MessagebirdSmsService, error) {
+	client := messagebird.New(config.SmsSecretKey)
+	_, err := balance.Read(client)
+	if err != nil {
+		logger.With("error", err).Error("Failed to connect to message bird")
+		return nil, err
+	}
+
+	return &MessagebirdSmsService{
+		config:            config,
+		messageBirdClient: client,
+	}, nil
+}
+
+// Send sends an SMS message using MessageBird
+func (l MessagebirdSmsService) Send(phoneNumber string, message string, msgParams *notification_models.SMSParams) (*SMS, error) {
+	var params *sms.Params
+	if msgParams != nil {
+		params = &sms.Params{
+			GroupIds:          msgParams.GroupIds,
+			Type:              msgParams.Type,
+			Reference:         msgParams.Reference,
+			Validity:          msgParams.Validity,
+			Gateway:           msgParams.Gateway,
+			TypeDetails:       msgParams.TypeDetails,
+			DataCoding:        msgParams.DataCoding,
+			ReportURL:         msgParams.ReportURL,
+			ScheduledDatetime: msgParams.ScheduledDatetime,
+			ShortenURLs:       msgParams.ShortenURLs,
+		}
+	}
+
+	msg, err := sms.Create(
+		l.messageBirdClient,
+		l.config.SmsOriginator,
+		[]string{phoneNumber},
+		message,
+		params,
+	)
+	if err != nil {
+		return nil, l.handleError(err)
+	}
+
+	return msg, nil
+}
+
+func (l MessagebirdSmsService) handleError(err error) error {
+	// PayloadType assert to ErrorResponse
+	var mbErr messagebird.ErrorResponse
+	if goErrors.As(err, &mbErr) {
+		// Log the error details
+		logger.Logger.
+			With("errors", mbErr.Errors).
+			Error("Failed to send SMS")
+
+		fields := make([]*errors.FieldError, len(mbErr.Errors))
+		for i, e := range mbErr.Errors {
+
+			field := e.Parameter
+			switch field {
+			case "recipient":
+				field = "phone_number"
+			}
+
+			rule := strconv.Itoa(e.Code)
+			message := e.Description
+			switch e.Code {
+			case 9:
+				rule = "invalid_input"
+
+				if field == "phone_number" {
+					message = "Invalid phone number"
+				}
+			}
+
+			fields[i] = &errors.FieldError{
+				Field:   field,
+				Rule:    rule,
+				Param:   field,
+				Message: message,
+			}
+		}
+
+		return errors.NewValidationError(mbErr.Error(), fields...)
+	}
+
+	return errors.NewValidationError(err.Error())
+}
+
+func (n *MessagebirdSmsServiceConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(n, lookupPath)
+}
+
+// RegistryNotificationsSMSServiceConfiguration registers the MessageBird SMS service configuration
+func RegistryNotificationsSMSServiceConfiguration(ctx di.Context, opts *di.RegistryOpts) (*MessagebirdSmsServiceConfiguration, error) {
+	return di.ConfigurationLookup[*MessagebirdSmsServiceConfiguration](ctx, opts)
+}
+
+// RegistryNotificationsSMSService registers the MessageBird SMS service
+func RegistryNotificationsSMSService(ctx di.Context, opts *di.RegistryOpts) (SMSService, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	cfg, err := di.CreateConfiguration[*MessagebirdSmsServiceConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	if types.IsEmpty(cfg) {
+		log.Warn("No MessageBird configuration provided. SMS service not initialized")
+		return nil, nil
+	}
+
+	smsService, err := NewMessagebirdSmsService(ctx, cfg)
+	if err != nil {
+		log.With("error", err).Error("Failed to create SMS service")
+		return nil, err
+	}
+
+	return smsService, nil
+}

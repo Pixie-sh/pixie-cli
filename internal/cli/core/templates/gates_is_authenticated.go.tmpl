@@ -1,0 +1,270 @@
+package gates
+
+import (
+	"context"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+	"github.com/pixie-sh/errors-go"
+	"github.com/pixie-sh/logger-go/logger"
+
+	sessionmanager "{{.ModuleName}}/infra/session_manager"
+	pkghttp "{{.ModuleName}}/pkg/context/http"
+	"{{.ModuleName}}/pkg/models/session_manager_models"
+)
+
+// HasPermissions gate for checking user permissions/features
+type HasPermissions struct{}
+
+// NewHasPermissions creates a new HasPermissions gate
+func NewHasPermissions(_ context.Context) (HasPermissions, error) {
+	return HasPermissions{}, nil
+}
+
+// AllFeaturesOf returns a middleware that checks if user has ALL specified features
+func (j HasPermissions) AllFeaturesOf(features ...string) http.ServerHandler {
+	return func(c http.ServerCtx) error {
+		jwt := pkghttp.GetCtxJWT(c)
+		if slices.Contains(jwt.Features, session_manager_models.SuperadminRoleFeature) {
+			return c.Next()
+		}
+
+		for _, feature := range features {
+			if !slices.Contains(jwt.Features, feature) {
+				return errors.New("unauthorized").WithErrorCode(errors.UnauthorizedErrorCode)
+			}
+		}
+
+		return c.Next()
+	}
+}
+
+// AnyFeaturesOf returns a middleware that checks if user has ANY of specified features
+func (j HasPermissions) AnyFeaturesOf(features ...string) http.ServerHandler {
+	return func(c http.ServerCtx) error {
+		jwt := pkghttp.GetCtxJWT(c)
+		if slices.Contains(jwt.Features, session_manager_models.SuperadminRoleFeature) {
+			return c.Next()
+		}
+
+		for _, feature := range features {
+			if slices.Contains(jwt.Features, feature) {
+				return c.Next()
+			}
+		}
+
+		return errors.New("unauthorized").WithErrorCode(errors.UnauthorizedErrorCode)
+	}
+}
+
+// IsAuthenticated gate validates JWT tokens
+type IsAuthenticated struct {
+	HasPermissions
+
+	headerKey string
+}
+
+// NewIsAuthenticated creates a new IsAuthenticated gate
+// headerKey is the header key to search for the JWT token
+func NewIsAuthenticated(ctx context.Context, headerKey string) (IsAuthenticated, error) {
+	sessionmanager.Must(ctx)
+
+	hp, err := NewHasPermissions(ctx)
+	if err != nil {
+		return IsAuthenticated{}, err
+	}
+
+	if len(headerKey) == 0 {
+		headerKey = "authorization"
+		logger.Debug("using default header key '%s' for Authenticated gate", headerKey)
+	}
+
+	return IsAuthenticated{
+		HasPermissions: hp,
+		headerKey:      headerKey,
+	}, nil
+}
+
+// Authenticated returns a middleware that validates JWT tokens
+func (i IsAuthenticated) Authenticated() func(c http.ServerCtx) error {
+	return func(c http.ServerCtx) error {
+		// try token from header first, then query string
+		tkn := c.Get(i.headerKey)
+		if tkn == "" {
+			tkn = c.Query(i.headerKey)
+		}
+
+		data, token, session, err := i.processAuthorizationString(c.Context(), tkn)
+		if err != nil {
+			return err
+		}
+
+		pkghttp.SetCtxJWT(c, token, data)
+		pkghttp.SetCtxSession(c, session)
+		return c.Next()
+	}
+}
+
+// NotAuthenticated returns a middleware that validates the user is NOT authenticated
+func (i IsAuthenticated) NotAuthenticated() func(c http.ServerCtx) error {
+	return func(c http.ServerCtx) error {
+		if len(i.headerKey) == 0 {
+			i.headerKey = "authorization"
+		}
+
+		tkn := c.Get(i.headerKey)
+		if tkn == "" {
+			tkn = c.Query(i.headerKey)
+		}
+
+		_, _, _, err := i.processAuthorizationString(c.Context(), tkn)
+		if err != nil {
+			return c.Next()
+		}
+
+		return errors.New("already authenticated").WithErrorCode(errors.UnauthorizedErrorCode)
+	}
+}
+
+// AuthenticatedInactive returns a middleware that allows inactive authenticated users
+func (i IsAuthenticated) AuthenticatedInactive() func(c http.ServerCtx) error {
+	return func(c http.ServerCtx) error {
+		if len(i.headerKey) == 0 {
+			i.headerKey = "authorization"
+			logger.Debug("using default header key '%s' for Authenticated gate", i.headerKey)
+		}
+
+		tkn := c.Get(i.headerKey)
+		if tkn == "" {
+			tkn = c.Query(i.headerKey)
+		}
+
+		data, token, session, err := i.processAuthorizationString(c.Context(), tkn)
+		if err != nil {
+			_, has := errors.Has(err, errors.EntitiesInactiveUnauthorizedErrorCode)
+			if has {
+				pkghttp.SetCtxJWT(c, token, data)
+				pkghttp.SetCtxSession(c, session)
+				return c.Next()
+			}
+
+			return err
+		}
+
+		return errors.New("already authenticated").WithErrorCode(errors.UnauthorizedErrorCode)
+	}
+}
+
+// AuthenticatedOrAuthenticatedInactive accepts either a fully authenticated user or an inactive account
+func (i IsAuthenticated) AuthenticatedOrAuthenticatedInactive() func(c http.ServerCtx) error {
+	return func(c http.ServerCtx) error {
+		if len(i.headerKey) == 0 {
+			i.headerKey = "authorization"
+			logger.Debug("using default header key '%s' for Authenticated gate", i.headerKey)
+		}
+
+		tkn := c.Get(i.headerKey)
+		if tkn == "" {
+			tkn = c.Query(i.headerKey)
+		}
+
+		data, token, session, err := i.processAuthorizationString(c.Context(), tkn)
+		if err != nil {
+			_, has := errors.Has(err, errors.EntitiesInactiveUnauthorizedErrorCode)
+			if !has {
+				return err
+			}
+		}
+
+		pkghttp.SetCtxJWT(c, token, data)
+		pkghttp.SetCtxSession(c, session)
+		return c.Next()
+	}
+}
+
+func (i IsAuthenticated) processAuthorizationString(ctx context.Context, headerValue string) (session_manager_models.JWT, string, session_manager_models.UntypedSession, error) {
+	var sessionObj session_manager_models.UntypedSession
+	var jwtObj session_manager_models.JWT
+	var token string
+	var err error
+
+	if len(headerValue) == 0 {
+		return jwtObj, token, sessionObj, errors.New("not authenticated").WithErrorCode(errors.InvalidAuthTokenErrorCode)
+	}
+
+	tknSplit := strings.Split(headerValue, "Bearer ")
+	if len(tknSplit) == 1 {
+		token = tknSplit[0]
+	} else if len(tknSplit) == 2 {
+		token = tknSplit[1]
+	}
+
+	if !sessionmanager.ExistsInCache(ctx, token) {
+		return jwtObj, token, sessionObj, errors.New("unknown token").WithErrorCode(errors.UnauthorizedErrorCode)
+	}
+
+	_, err = sessionmanager.ParseJWT(token)
+	forceLogout := err != nil
+	if err != nil {
+		logger.With("error", err).
+			Error("unable to create jwt from string. forcing logout; %s", err)
+	}
+
+	jwtObj, sessionObj, err = sessionmanager.FetchFromCache(ctx, token)
+	forceLogout = forceLogout || err != nil
+	if err != nil {
+		logger.With("error", err).
+			Error("unable to fetch jwt from string. forcing logout; %s", err)
+	}
+
+	if forceLogout {
+		err = sessionmanager.Delete(ctx, token, jwtObj, sessionObj)
+		logger.With("error", err).
+			With("cache_jwt", jwtObj).
+			Error("unable to delete jwt from string. forcing logout; %s", err)
+
+		return jwtObj, token, sessionObj, errors.New("invalid token").WithErrorCode(errors.UnauthorizedErrorCode)
+	}
+
+	inactiveCount := 0
+	for _, entity := range jwtObj.Entities {
+		if entity.Status != "Active" {
+			inactiveCount++
+		}
+	}
+
+	var blocked bool
+	for _, entity := range jwtObj.Entities {
+		if entity.Status == "Blocked" {
+			blocked = true
+			break
+		}
+	}
+
+	aboutToExpire, err := sessionmanager.ExpiresLT(ctx, token, sessionmanager.TTL()/6*time.Second)
+	if err != nil {
+		logger.
+			With("jwt", jwtObj).
+			With("session", sessionObj).
+			With("error", err).
+			Warn("problem checking expiration of token")
+	}
+
+	if aboutToExpire {
+		err = sessionmanager.Refresh(ctx, token)
+	}
+
+	if blocked {
+		logger.With("jwt_data", jwtObj).Warn("One entry is blocked. unauthorized.")
+		return jwtObj, token, sessionObj, errors.New("not allowed").WithErrorCode(errors.EntitiesBlockedUnauthorizedErrorCode)
+	}
+
+	if inactiveCount == len(jwtObj.Entities) {
+		logger.With("jwt_data", jwtObj).Debug("all entities are inactive. unauthorized.")
+		return jwtObj, token, sessionObj, errors.New("not authenticated").WithErrorCode(errors.EntitiesInactiveUnauthorizedErrorCode)
+	}
+
+	return jwtObj, token, sessionObj, nil
+}

@@ -1,0 +1,113 @@
+package notifications_services
+
+import (
+	"context"
+	"slices"
+	"strings"
+
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/errors/db_errors"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/errors-go"
+
+	internaldi "{{ .ModuleName }}/infra/di"
+	"{{ .ModuleName }}/infra/uidgen"
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer"
+
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer"
+)
+
+// HelpersService provides helper functions for notification template expansion
+type HelpersService struct {
+	notificationDataLayer *notifications_data_layer.NotificationsDataLayer
+	userDataLayer         *authentication_data_layer.AuthenticationDataLayer
+}
+
+// NewHelpersService creates a new HelpersService
+func NewHelpersService(
+	_ context.Context,
+	notificationsDataLayer *notifications_data_layer.NotificationsDataLayer,
+	userDataLayer *authentication_data_layer.AuthenticationDataLayer,
+) HelpersService {
+	return HelpersService{
+		notificationDataLayer: notificationsDataLayer,
+		userDataLayer:         userDataLayer,
+	}
+}
+
+// GetFcmTokenByUserIdPanic retrieves the FCM token for a user ID, panics on error
+func (h HelpersService) GetFcmTokenByUserIdPanic(userID uid.UID) string {
+	token, err := h.notificationDataLayer.UserFirebaseTokenRepository.GetFcmTokenByUserId(userID)
+	if err != nil {
+		panic(db_errors.Handle(err))
+	}
+
+	if len(token) > 0 {
+		return token[0]
+	}
+
+	return ""
+}
+
+// GetFcmTokenByStringUserIdPanic retrieves the FCM token for a string user ID, panics on error
+func (h HelpersService) GetFcmTokenByStringUserIdPanic(userIDString string) string {
+	userID, err := uid.FromString(userIDString)
+	if err != nil {
+		panic(err)
+	}
+
+	if !uidgen.IsUser(userID) {
+		panic(errors.New("invalid user id; it's a user uid").WithErrorCode(errors.TemplatePanicErrorCode))
+	}
+
+	token, err := h.notificationDataLayer.UserFirebaseTokenRepository.GetFcmTokenByUserId(userID)
+	if err != nil {
+		panic(db_errors.Handle(err))
+	}
+
+	if len(token) > 0 {
+		return token[0]
+	}
+
+	return ""
+}
+
+// GetEmailByUserIDPanic retrieves the email address for a user ID, panics on error
+func (h HelpersService) GetEmailByUserIDPanic(userID uid.UID) string {
+	user, err := h.userDataLayer.UserRepository.FindUserByIDUnscoped(userID)
+	if err != nil {
+		panic(db_errors.Handle(err))
+	}
+
+	return user.EmailAddress
+}
+
+// PanicFor panics if the value matches any of the values in the comma-separated valuesString
+func (h HelpersService) PanicFor(value string, valuesString string) string {
+	values := strings.Split(valuesString, ",")
+	if slices.Contains(values, value) {
+		panic(errors.New("condition met, should panic").WithErrorCode(errors.TemplateDoNotTriggerErrorCode))
+	}
+	return "false"
+}
+
+// RegistryNotificationsHelpersService registers the notification helpers service
+func RegistryNotificationsHelpersService(ctx di.Context, opts *di.RegistryOpts) (*HelpersService, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	notificationsDataLayer, err := di.Create[*notifications_data_layer.NotificationsDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenNotificationsDataLayer))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenNotificationsDataLayer, internaldi.RegistryTokenNotificationsHelpersService)
+		return nil, err
+	}
+
+	userDataLayer, err := di.Create[*authentication_data_layer.AuthenticationDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenAuthenticationDataLayer))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenAuthenticationDataLayer, internaldi.RegistryTokenNotificationsHelpersService)
+		return nil, err
+	}
+
+	helpersService := NewHelpersService(ctx, notificationsDataLayer, userDataLayer)
+	return &helpersService, nil
+}

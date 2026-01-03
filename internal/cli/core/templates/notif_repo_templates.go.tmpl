@@ -1,0 +1,74 @@
+package notifications_repositories
+
+import (
+	"context"
+
+	"github.com/pixie-sh/core-go/pkg/models/language_models"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"github.com/pixie-sh/database-helpers-go/pipeline"
+	"github.com/pixie-sh/database-helpers-go/pipeline/operators"
+	"github.com/pixie-sh/errors-go"
+
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer/notifications_entities"
+)
+
+// TemplatesRepository handles database operations for notification templates
+type TemplatesRepository struct {
+	database.Repository[TemplatesRepository]
+}
+
+// NewTemplatesRepository creates a new TemplatesRepository
+func NewTemplatesRepository(db *database.DB) TemplatesRepository {
+	return TemplatesRepository{database.NewRepository(
+		db,
+		NewTemplatesRepository,
+	)}
+}
+
+// GetTemplateByName retrieves a template by name and language
+func (r TemplatesRepository) GetTemplateByName(templateName string, language language_models.LanguageEnum) (string, error) {
+	var tmpl string
+	err := r.DB.Model(&notifications_entities.Template{}).
+		Where("name = ? and language = ?", templateName, language).
+		Pluck("template", &tmpl).
+		Error
+
+	return tmpl, err
+}
+
+// Insert creates a new template
+func (r TemplatesRepository) Insert(entity notifications_entities.Template) (notifications_entities.Template, error) {
+	return entity, r.DB.Create(&entity).Error
+}
+
+// Update updates an existing template
+func (r TemplatesRepository) Update(entity notifications_entities.Template) (notifications_entities.Template, error) {
+	return entity, r.DB.Save(&entity).Error
+}
+
+// GetAllThroughPipeline retrieves all templates using a pipeline
+func (r TemplatesRepository) GetAllThroughPipeline(ctx context.Context, pipe *pipeline.Pipeline) (*operators.UntypedPaginatedResult, error) {
+	db := r.DB.Model(&notifications_entities.Template{})
+
+	exec, err := pipe.ExecWithPassable(ctx, operators.NewResult(db))
+	if err != nil {
+		return nil, err
+	}
+
+	if exec.Error() != nil {
+		return nil, exec.Error()
+	}
+
+	vendors, ok := exec.GetPassable().(*operators.UntypedPaginatedResult)
+	if !ok {
+		return nil, errors.New("cannot get paginated result").WithErrorCode(errors.DBErrorCode)
+	}
+
+	return vendors, nil
+}
+
+// GetByID retrieves a template by ID
+func (r TemplatesRepository) GetByID(id uint64) (notifications_entities.Template, error) {
+	var tmpl notifications_entities.Template
+	return tmpl, r.DB.First(&tmpl, id).Error
+}

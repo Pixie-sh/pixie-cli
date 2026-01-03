@@ -1,0 +1,66 @@
+package auth_migrations
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/models/database_models"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"gorm.io/gorm"
+)
+
+type userOtp{{ .MigrationTimestamp }}3 struct {
+	database_models.SoftDeletable
+
+	ID           uid.UID                      `gorm:"primary_key,type:uuid"`
+	UserID       uid.UID                      `gorm:"type:uuid;not null;index:idx_otp_user_id"`
+	EmailAddress string                       `gorm:"type:text;not null;index:idx_otp_email"`
+	OTPCode      string                       `gorm:"size:6;not null;index:idx_otp_code"`
+	Status       string                       `gorm:"type:otp_status;default:'pending';index:idx_otp_status"`
+	ExpiresAt    time.Time                    `gorm:"not null;index:idx_otp_expires_at"`
+	User         *user{{ .MigrationTimestamp }}1 `gorm:"foreignKey:UserID;references:ID"`
+}
+
+func (userOtp{{ .MigrationTimestamp }}3) TableName() string {
+	return "user_otps"
+}
+
+var CreateUserOTPTable{{ .MigrationTimestamp }}3 = database.Migration{
+	ID: "{{ .MigrationTimestamp }}3_CreateOTPTable",
+	Migrate: func(tx *gorm.DB) error {
+		// Create the ENUM type for OTP status
+		if err := tx.Exec(`CREATE TYPE otp_status AS ENUM ('pending', 'expired', 'used')`).Error; err != nil {
+			return err
+		}
+
+		// Create the table
+		if err := tx.AutoMigrate(&userOtp{{ .MigrationTimestamp }}3{}); err != nil {
+			return err
+		}
+
+		// Create composite indexes for better performance
+		if err := tx.Exec(`
+			CREATE INDEX idx_otp_email_status_expires 
+			ON user_otps(email_address, status, expires_at)
+		`).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Exec(`
+			CREATE INDEX idx_otp_code_email_status 
+			ON user_otps(otp_code, email_address, status)
+		`).Error; err != nil {
+			return err
+		}
+
+		return nil
+	},
+	Rollback: func(tx *gorm.DB) error {
+		// Drop the table first (this will also drop the indexes and constraints)
+		if err := tx.Migrator().DropTable(&userOtp{{ .MigrationTimestamp }}3{}); err != nil {
+			return err
+		}
+		// Then drop the ENUM type
+		return tx.Exec("DROP TYPE IF EXISTS otp_status").Error
+	},
+}

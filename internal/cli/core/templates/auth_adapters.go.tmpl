@@ -1,0 +1,77 @@
+package authentication_adapters
+
+import (
+	"github.com/pixie-sh/core-go/pkg/models"
+	"github.com/pixie-sh/core-go/pkg/models/adapters"
+	"github.com/pixie-sh/core-go/pkg/types/dates"
+
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_entities"
+	"{{ .ModuleName }}/pkg/models/auth"
+)
+
+// Adapters is the main adapter container for authentication
+type Adapters struct {
+	*UserAdapter
+}
+
+// NewAdapters creates a new authentication adapters instance
+func NewAdapters() *Adapters {
+	return &Adapters{
+		UserAdapter: NewUserAdapter(),
+	}
+}
+
+var _ adapters.Adapter[auth_entities.User, auth.User] = UserAdapter{}
+
+// UserAdapter adapts user entities to user models
+type UserAdapter struct{}
+
+// NewUserAdapter creates a new user adapter
+func NewUserAdapter() *UserAdapter {
+	return &UserAdapter{}
+}
+
+// Adapt converts a user entity to a user model
+func (a UserAdapter) Adapt(userEntity auth_entities.User) auth.User {
+	user := auth.User{
+		SoftDeletable: models.SoftDeletable{
+			CreatedAt: userEntity.SoftDeletable.CreatedAt,
+			UpdatedAt: userEntity.SoftDeletable.UpdatedAt,
+			DeletedAt: dates.FromNullableTime(userEntity.DeletedAt),
+		},
+		ID:           userEntity.ID,
+		EmailAddress: userEntity.EmailAddress,
+		Type:         userEntity.UserType.String(),
+		LastIp:       userEntity.LastIp,
+		LastLogin:    userEntity.LastLogin,
+	}
+
+	return user
+}
+
+// AdaptCollection converts a collection of user entities to user models
+func (a UserAdapter) AdaptCollection(userEntities []auth_entities.User) []auth.User {
+	users := make([]auth.User, len(userEntities))
+	for i, userEntity := range userEntities {
+		users[i] = a.Adapt(userEntity)
+	}
+	return users
+}
+
+// AdaptUserProfile converts a user entity to a user profile model
+func (a UserAdapter) AdaptUserProfile(user auth_entities.User) auth.UserProfile {
+	response := auth.UserProfile{
+		ID:           user.ID,
+		EmailAddress: user.EmailAddress,
+		FullName:     user.FullName,
+		UserType:     user.UserType.String(),
+		Status:       user.Status,
+		LastIp:       user.LastIp,
+	}
+
+	if !user.LastLogin.IsZero() {
+		response.LastLogin = &user.LastLogin
+	}
+
+	return response
+}

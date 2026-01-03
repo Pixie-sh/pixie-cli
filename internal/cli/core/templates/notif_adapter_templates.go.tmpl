@@ -1,0 +1,55 @@
+package notification_adapters
+
+import (
+	"github.com/pixie-sh/core-go/pkg/models"
+	"github.com/pixie-sh/core-go/pkg/models/adapters"
+	"github.com/pixie-sh/core-go/pkg/models/notification_models"
+	"github.com/pixie-sh/core-go/pkg/types/dates"
+	"github.com/pixie-sh/core-go/pkg/types/slices"
+
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer/notifications_entities"
+)
+
+var _ adapters.Adapter[notifications_entities.Template, notification_models.Template] = TemplateAdapter{}
+
+// TemplateAdapter adapts template entities to models
+type TemplateAdapter struct{}
+
+// NewTemplateAdapter creates a new TemplateAdapter
+func NewTemplateAdapter() TemplateAdapter {
+	return TemplateAdapter{}
+}
+
+// Adapt converts a Template entity to a Template model
+func (a TemplateAdapter) Adapt(template notifications_entities.Template) notification_models.Template {
+	return notification_models.Template{
+		SoftDeletable: models.SoftDeletable{
+			CreatedAt: template.SoftDeletable.CreatedAt,
+			UpdatedAt: template.SoftDeletable.UpdatedAt,
+			DeletedAt: dates.FromNullableTime(template.SoftDeletable.DeletedAt),
+		},
+		ID:       template.ID,
+		Name:     template.Name,
+		Language: template.Language,
+		Template: template.Template,
+	}
+}
+
+// AdaptForList converts a Template entity to a Template model without the template content
+func (a TemplateAdapter) AdaptForList(template notifications_entities.Template) notification_models.Template {
+	return notification_models.Template{
+		SoftDeletable: models.SoftDeletable{
+			CreatedAt: template.SoftDeletable.CreatedAt,
+			UpdatedAt: template.SoftDeletable.UpdatedAt,
+			DeletedAt: dates.FromNullableTime(template.SoftDeletable.DeletedAt),
+		},
+		ID:       template.ID,
+		Name:     template.Name,
+		Language: template.Language,
+	}
+}
+
+// AdaptCollection converts a collection of Template entities to models
+func (a TemplateAdapter) AdaptCollection(actions []notifications_entities.Template) []notification_models.Template {
+	return slices.Map(actions, a.AdaptForList)
+}

@@ -1,0 +1,501 @@
+package session_manager
+
+import (
+	"context"
+	"crypto/rsa"
+	"encoding/base64"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	cache2 "github.com/pixie-sh/core-go/infra/cache"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	serializer2 "github.com/pixie-sh/core-go/pkg/models/serializer"
+	"github.com/pixie-sh/core-go/pkg/types"
+	"github.com/pixie-sh/core-go/pkg/types/maps"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/errors-go"
+	"github.com/pixie-sh/logger-go/logger"
+
+	"{{ .ModuleName }}/infra/uidgen"
+	"{{ .ModuleName }}/infra/version"
+	"{{ .ModuleName }}/pkg/models/auth"
+	"{{ .ModuleName }}/pkg/models/session_manager_models"
+)
+
+// SessionServiceConfiguration holds session service configuration
+type SessionServiceConfiguration struct {
+	ValidityInSecondsToken uint64 `json:"validity_in_seconds_token"`
+}
+
+// JWTTokenServiceConfiguration holds JWT service configuration
+type JWTTokenServiceConfiguration struct {
+	SessionServiceConfiguration
+	TokenPrivateKey string `json:"token_private_key"`
+	TokenPublicKey  string `json:"token_public_key"`
+}
+
+// JWTTokenService handles JWT token operations
+type JWTTokenService struct {
+	config JWTTokenServiceConfiguration
+	cache  cache2.SetCache
+}
+
+// NewJWTTokenService creates a new JWT token service
+func NewJWTTokenService(_ context.Context, config JWTTokenServiceConfiguration, cache cache2.SetCache) (*JWTTokenService, error) {
+	return &JWTTokenService{
+		config: config,
+		cache:  cache,
+	}, nil
+}
+
+// GenerateToken generates a new JWT token
+func (l *JWTTokenService) GenerateToken(ctx context.Context, id uid.UID, email string, ip string, channel session_manager_models.SessionChannel, entities []session_manager_models.JWTEntity) (session_manager_models.JWT, error) {
+	var jwtObject session_manager_models.JWT
+	var err error
+
+	decodedPublicKey, err := l.decodePEM(l.config.TokenPrivateKey)
+	if err != nil {
+		return jwtObject, err
+	}
+
+	key, err := l.parseRSAPrivateKey(decodedPublicKey)
+	if err != nil {
+		return jwtObject, err
+	}
+
+	jwtObject, err = l.buildTokenObject(ctx, id, email, ip, key, channel, entities)
+	if err != nil {
+		return jwtObject, err
+	}
+
+	return jwtObject, nil
+}
+
+// FetchFromCacheByJWT retrieves a JWT from cache by the encoded JWT string
+func (l *JWTTokenService) FetchFromCacheByJWT(ctx context.Context, userToken string) (session_manager_models.JWT, error) {
+	tokenBytes, err := l.cache.Get(ctx, fmt.Sprintf(CacheJWTTemplate, userToken))
+	if err != nil {
+		return session_manager_models.JWT{}, err
+	}
+
+	var token session_manager_models.JWT
+	err = serializer2.Deserialize(tokenBytes, &token)
+	if err != nil {
+		return session_manager_models.JWT{}, errors.New("unable to fetch token from cache")
+	}
+
+	return token, nil
+}
+
+func (l *JWTTokenService) buildTokenObject(_ context.Context, id uid.UID, email string, ip string, jwtKey interface{}, channel session_manager_models.SessionChannel, entities []session_manager_models.JWTEntity) (session_manager_models.JWT, error) {
+	var roles = make(map[string]bool)
+	var features = make(map[string]bool)
+	var userStatus = auth.UserCreatedState.String()
+
+	for _, entity := range entities {
+		if entity.Status == auth.UserActiveState.String() {
+			userStatus = entity.Status
+			roles[entity.EntityType] = true
+			features[entity.EntityType] = true
+		}
+
+		if userStatus != auth.UserActiveState.String() {
+			userStatus = entity.Status
+		}
+	}
+
+	jwtModel := session_manager_models.JWT{
+		SessionID: uidgen.JWTSession().String(),
+		User: session_manager_models.JWTUser{
+			ID:        id,
+			Email:     email,
+			IP:        ip,
+			Status:    userStatus,
+			CreatedAt: time.Now().UTC(),
+			Channel:   channel,
+		},
+		Entities: entities,
+		Roles:    maps.MapKeys(roles),
+		Features: maps.MapKeys(features),
+		Version:  version.JWTVersion,
+	}
+
+	jwtStr, err := l.Encode(jwtModel, jwtKey)
+	if err != nil {
+		return session_manager_models.JWT{}, err
+	}
+
+	jwtModel.EncodedJWT = jwtStr
+	return jwtModel, err
+}
+
+// Encode encodes a JWT model into a signed string
+func (l *JWTTokenService) Encode(jwtModel session_manager_models.JWT, jwtKey interface{}) (string, error) {
+	if jwtKey == nil {
+		decodedPem, err := l.decodePEM(l.config.TokenPrivateKey)
+		if err != nil {
+			return "", err
+		}
+
+		jwtKey, err = l.parseRSAPrivateKey(decodedPem)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	atClaims := jwt.MapClaims{}
+	atClaims["session_id"] = jwtModel.SessionID
+	atClaims["user"] = jwtModel.User
+	atClaims["entities"] = jwtModel.Entities
+	atClaims["roles"] = jwtModel.Roles
+	atClaims["features"] = jwtModel.Features
+	atClaims["version"] = jwtModel.Version
+	at := jwt.NewWithClaims(jwt.SigningMethodRS256, atClaims)
+
+	return at.SignedString(jwtKey)
+}
+
+// Decode decodes an encoded JWT string into a JWT model
+func (l *JWTTokenService) Decode(encoded string, jwtKey string) (session_manager_models.JWT, error) {
+	log := logger.Logger.With("encoded", encoded).
+		With("jwtKey", jwtKey)
+
+	decodedPublicKey, err := l.decodePEM(jwtKey)
+	if err != nil {
+		log.With("error", err).Error("failed to decode PEM")
+		return session_manager_models.JWT{}, err
+	}
+
+	key, err := l.parseRSAPublicKey(decodedPublicKey)
+	if err != nil {
+		log.With("error", err).Error("failed to parse RSA public key")
+		return session_manager_models.JWT{}, err
+	}
+
+	tkn, err := jwt.Parse(encoded, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+			log.
+				With("err", err).
+				Error("unexpected method: %s", t.Header["alg"])
+			return nil, errors.New("failed to validate token").WithErrorCode(errors.InvalidAuthTokenErrorCode)
+		}
+		return key, nil
+	})
+	if err != nil {
+		log.With("error", err).Error("failed to parse jwt")
+		return session_manager_models.JWT{}, err
+	}
+
+	claims, ok := tkn.Claims.(jwt.MapClaims)
+	if !ok {
+		log.Error("failed to get jwt claims")
+		return session_manager_models.JWT{}, errors.New("failed to get jwt claims").WithErrorCode(errors.InvalidAuthTokenErrorCode)
+	}
+
+	var jwtObject session_manager_models.JWT
+	err = serializer2.ToStruct(claims, &jwtObject)
+	if err != nil {
+		return session_manager_models.JWT{}, errors.NewWithError(err, "unable to deserialize claims").WithErrorCode(errors.InvalidAuthTokenErrorCode)
+	}
+
+	return jwtObject, nil
+}
+
+// ExpiresLT checks if the JWT expires within the given duration
+func (l *JWTTokenService) ExpiresLT(ctx context.Context, jwtString string, expiresIn time.Duration) (bool, error) {
+	cacheExpiresIn, err := l.cache.TTL(ctx, fmt.Sprintf(CacheJWTTemplate, jwtString))
+	if err != nil {
+		return false, err
+	}
+	return cacheExpiresIn <= expiresIn, nil
+}
+
+// JWTFromString parses a JWT from a string
+func (l *JWTTokenService) JWTFromString(tkn string) (session_manager_models.JWT, error) {
+	return l.Decode(tkn, l.config.TokenPublicKey)
+}
+
+func (l *JWTTokenService) decodePEM(pemString string) ([]byte, error) {
+	decodedPublicKey, err := base64.StdEncoding.DecodeString(pemString)
+	if err != nil {
+		logger.Logger.
+			With("pem", pemString).
+			With("err", err).
+			Error("could not decode refresh token pem key")
+		return []byte{}, errors.New("could not decode refresh token pem key").WithErrorCode(errors.ServerErrorErrorCode)
+	}
+	return decodedPublicKey, nil
+}
+
+func (l *JWTTokenService) parseRSAPublicKey(pemKey []byte) (*rsa.PublicKey, error) {
+	key, err := jwt.ParseRSAPublicKeyFromPEM(pemKey)
+	if err != nil {
+		logger.Logger.
+			With("key", key).
+			With("err", err).
+			Error("validate: parse key")
+		return &rsa.PublicKey{}, errors.New("validate: parse key").WithErrorCode(errors.ServerErrorErrorCode)
+	}
+	return key, nil
+}
+
+func (l *JWTTokenService) parseRSAPrivateKey(pemKey []byte) (*rsa.PrivateKey, error) {
+	key, err := jwt.ParseRSAPrivateKeyFromPEM(pemKey)
+	if err != nil {
+		logger.Logger.
+			With("key", key).
+			With("err", err).
+			Error("validate: parse key")
+		return &rsa.PrivateKey{}, errors.New("validate: parse key").WithErrorCode(errors.ServerErrorErrorCode)
+	}
+	return key, nil
+}
+
+// TokenTTL returns the token TTL duration
+func (l *JWTTokenService) TokenTTL() time.Duration {
+	return time.Duration(l.config.ValidityInSecondsToken) * time.Second
+}
+
+func (l *JWTTokenService) batchModelsJwt(jwtEncoded string, tokenBytes []byte, jwtObject session_manager_models.JWT, tokenTTL time.Duration) []cache2.BatchSetExModel {
+	return []cache2.BatchSetExModel{
+		{
+			Key:      fmt.Sprintf(CacheJWTTemplate, jwtEncoded),
+			Value:    tokenBytes,
+			Duration: &tokenTTL,
+		},
+		{
+			Key:      fmt.Sprintf(CacheUserIDJWTSessionIDTemplate, jwtObject.User.ID, jwtObject.SessionID),
+			Value:    tokenBytes,
+			Duration: &tokenTTL,
+		},
+		{
+			Key:      fmt.Sprintf(CacheJWTSessionIDTemplate, jwtObject.SessionID),
+			Value:    types.UnsafeBytes(jwtEncoded),
+			Duration: &tokenTTL,
+		},
+	}
+}
+
+func (l *JWTTokenService) delete(ctx context.Context, jwtEncoded string, userID uid.UID, sessionID string) error {
+	err := l.cache.Delete(ctx, fmt.Sprintf(CacheJWTSessionIDTemplate, sessionID))
+	if err != nil {
+		return err
+	}
+
+	err = l.cache.Delete(ctx, fmt.Sprintf(CacheUserIDJWTSessionIDTemplate, userID, sessionID))
+	if err != nil {
+		return err
+	}
+
+	err = l.cache.Delete(ctx, fmt.Sprintf(CacheJWTTemplate, jwtEncoded))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ExistsInCacheByJWT checks if a JWT exists in the cache
+func (l *JWTTokenService) ExistsInCacheByJWT(ctx context.Context, token string) bool {
+	return l.cache.Peek(ctx, fmt.Sprintf(CacheJWTTemplate, token)) == nil
+}
+
+// GetSessions retrieves all sessions from cache
+func (l *JWTTokenService) GetSessions(ctx context.Context) (sessions []struct {
+	UserID       uint64                               `json:"user_id"`
+	SessionIDs   []string                             `json:"session_ids"`
+	SessionsData []session_manager_models.JWT `json:"session_data"`
+}, err error) {
+	return l.getSessions(ctx, "user.id:jwt.session_id::*", false)
+}
+
+func (l *JWTTokenService) getSessions(ctx context.Context, pattern string, detailSessions bool) (sessions []struct {
+	UserID       uint64                               `json:"user_id"`
+	SessionIDs   []string                             `json:"session_ids"`
+	SessionsData []session_manager_models.JWT `json:"session_data"`
+}, err error) {
+
+	keys, err := cache2.GetCollection(ctx, l.cache, pattern, 1000, true)
+	if err != nil {
+		return nil, err
+	}
+
+	var perUserID = make(map[string][]string)
+	for i := 0; i < len(keys); i++ {
+		parts := strings.Split(keys[i], "::")
+		if len(parts) != 2 {
+			pixiecontext.GetCtxLogger(ctx).Error("bad key (%s) at redis for sessions", keys[i])
+			continue
+		}
+
+		userSessionPair := strings.Split(parts[1], ":")
+		if len(userSessionPair) != 2 {
+			pixiecontext.GetCtxLogger(ctx).Error("bad partial key (%s) at redis for sessions", parts[1])
+			continue
+		}
+
+		sess, exists := perUserID[userSessionPair[0]]
+		if exists {
+			sess = append(sess, userSessionPair[1])
+		} else {
+			sess = []string{userSessionPair[1]}
+		}
+		perUserID[userSessionPair[0]] = sess
+	}
+
+	for key, val := range perUserID {
+		userID, err := strconv.ParseUint(key, 10, 64)
+		if err != nil {
+			return sessions, err
+		}
+
+		if detailSessions {
+			var sessionsData []session_manager_models.JWT
+			for _, sessionVal := range val {
+				jwtVal, _, err2 := l.GetJWTTokenBySessionID(ctx, sessionVal)
+				if err2 == nil {
+					sessionsData = append(sessionsData, jwtVal)
+				}
+			}
+
+			sessions = append(sessions, struct {
+				UserID       uint64                               `json:"user_id"`
+				SessionIDs   []string                             `json:"session_ids"`
+				SessionsData []session_manager_models.JWT `json:"session_data"`
+			}{UserID: userID, SessionIDs: val, SessionsData: sessionsData})
+		} else {
+			sessions = append(sessions, struct {
+				UserID       uint64                               `json:"user_id"`
+				SessionIDs   []string                             `json:"session_ids"`
+				SessionsData []session_manager_models.JWT `json:"session_data"`
+			}{UserID: userID, SessionIDs: val})
+		}
+	}
+
+	return sessions, err
+}
+
+// GetJWTTokenBySessionID retrieves a JWT by its session ID
+func (l *JWTTokenService) GetJWTTokenBySessionID(ctx context.Context, sessionID string) (session_manager_models.JWT, string, error) {
+	jwtBytes, err := l.cache.Get(ctx, fmt.Sprintf(CacheJWTSessionIDTemplate, sessionID))
+	if err != nil {
+		if cache2.IsEmptyError(err) {
+			return session_manager_models.JWT{}, "", errors.NewValidationError("session not found", &errors.FieldError{
+				Field:   "sessionID",
+				Rule:    "sessionNotFound",
+				Param:   sessionID,
+				Message: "unable to get session from cache",
+			}).WithErrorCode(errors.NotFoundErrorCode)
+		}
+
+		return session_manager_models.JWT{}, "", err
+	}
+
+	if len(jwtBytes) == 0 {
+		return session_manager_models.JWT{}, "", errors.NewValidationError("session not found", &errors.FieldError{
+			Field:   "sessionID",
+			Rule:    "sessionNotFound",
+			Param:   sessionID,
+			Message: "unable to get session from cache; value is empty",
+		}).WithErrorCode(errors.NotFoundErrorCode)
+	}
+
+	jwtStr := string(jwtBytes)
+	tokenBytes, err := l.cache.Get(ctx, fmt.Sprintf(CacheJWTTemplate, jwtStr))
+	if err != nil {
+		if cache2.IsEmptyError(err) {
+			return session_manager_models.JWT{}, "", errors.NewValidationError("session not found with jwt", &errors.FieldError{
+				Field:   "jwt",
+				Rule:    "jwtNotFound",
+				Param:   jwtStr,
+				Message: "unable to get token from jwt in cache",
+			}).WithErrorCode(errors.NotFoundErrorCode)
+		}
+
+		return session_manager_models.JWT{}, "", err
+	}
+
+	var token session_manager_models.JWT
+	return token, jwtStr, serializer2.Deserialize(tokenBytes, &token, false)
+}
+
+// GetJWTByUserID retrieves all JWTs for a specific user
+func (l *JWTTokenService) GetJWTByUserID(ctx context.Context, userID uid.UID) (struct {
+	UserID       uint64                               `json:"user_id"`
+	SessionIDs   []string                             `json:"session_ids"`
+	SessionsData []session_manager_models.JWT `json:"session_data"`
+}, error) {
+	sessions, err := l.getSessions(ctx, fmt.Sprintf(CacheUserIDJWTSessionIDTemplate, userID, "*"), true)
+	if err != nil {
+		return struct {
+			UserID       uint64                               `json:"user_id"`
+			SessionIDs   []string                             `json:"session_ids"`
+			SessionsData []session_manager_models.JWT `json:"session_data"`
+		}{}, err
+	}
+	if len(sessions) == 0 {
+		return struct {
+			UserID       uint64                               `json:"user_id"`
+			SessionIDs   []string                             `json:"session_ids"`
+			SessionsData []session_manager_models.JWT `json:"session_data"`
+		}{}, errors.New("no sessions found for user id: %d", userID).WithErrorCode(errors.NotFoundErrorCode)
+	}
+
+	return sessions[0], nil
+}
+
+// DeleteJWT deletes a JWT by session ID
+func (l *JWTTokenService) DeleteJWT(ctx context.Context, sessionID string) error {
+	jwtBytes, err := l.cache.Get(ctx, fmt.Sprintf(CacheJWTSessionIDTemplate, sessionID))
+	if err != nil {
+		if cache2.IsEmptyError(err) {
+			return errors.New("session %s not found", sessionID).WithErrorCode(errors.NotFoundErrorCode)
+		}
+
+		return err
+	}
+
+	jwtString := string(jwtBytes)
+	tokenBytes, err := l.cache.Get(ctx, fmt.Sprintf(CacheJWTTemplate, jwtString))
+	if err != nil {
+		if cache2.IsEmptyError(err) {
+			return errors.New("token from session not found").WithErrorCode(errors.NotFoundErrorCode)
+		}
+
+		return err
+	}
+
+	var token session_manager_models.JWT
+	err = serializer2.Deserialize(tokenBytes, &token)
+	if err != nil {
+		return err
+	}
+
+	err = l.cache.BatchDelete(ctx, []string{
+		fmt.Sprintf(CacheJWTSessionIDTemplate, sessionID),
+		fmt.Sprintf(CacheUserIDJWTSessionIDTemplate, token.User.ID, sessionID),
+		fmt.Sprintf(CacheJWTTemplate, jwtString),
+	})
+
+	if err != nil {
+		logger.Logger.With("error", err).Error("errors from deletion on session id %s", sessionID)
+		return errors.New("token from session %s not found", sessionID).WithErrorCode(errors.NotFoundErrorCode)
+	}
+
+	return nil
+}
+
+// GetBlobByUserIDAndSessionID retrieves raw JWT data by user ID and session ID
+func (l *JWTTokenService) GetBlobByUserIDAndSessionID(ctx context.Context, userID uid.UID, sessionID string) ([]byte, error) {
+	res, err := l.cache.Get(ctx, fmt.Sprintf(CacheUserIDJWTSessionIDTemplate, userID, sessionID))
+	return res, err
+}
+
+// GetBlobByJWT retrieves raw JWT data by encoded JWT string
+func (l *JWTTokenService) GetBlobByJWT(ctx context.Context, jwtEncoded string) ([]byte, error) {
+	res, err := l.cache.Get(ctx, fmt.Sprintf(CacheJWTTemplate, jwtEncoded))
+	return res, err
+}

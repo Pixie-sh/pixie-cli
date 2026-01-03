@@ -1,0 +1,69 @@
+package authentication_services
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/pixie-sh/core-go/infra/state_machine"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/types"
+	"github.com/pixie-sh/core-go/pkg/uid"
+
+	"{{ .ModuleName }}/pkg/models/auth"
+)
+
+func GetUserRegistrationStateMachine(ctx context.Context, userID uid.UID, storage state_machine.StateMachineStorage, withStateMachineEntityStorage ...state_machine.StateMachineEntityStorage) (*state_machine.Machine, error) {
+	userStateMachine := state_machine.NewMachine(ctx, fmt.Sprintf("%s-%s", types.NameOf(auth.User{}), userID), storage, withStateMachineEntityStorage...)
+
+	err := userStateMachine.Restore()
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).With("err", err).
+			Debug("user %d state machine doesn't exist, creating new one.", userID)
+
+		userStateMachine.AddState(auth.UserCreatedState)
+		userStateMachine.AddState(auth.UserInVerificationState)
+		userStateMachine.AddState(auth.UserActiveState)
+		userStateMachine.AddState(auth.UserBlockedState)
+
+		_ = userStateMachine.SetInitialState(auth.UserCreatedState)
+
+		_ = userStateMachine.AddTransition(
+			auth.UserCreatedState,
+			auth.UserAddedTransitionEvent,
+			auth.UserInVerificationState)
+
+		_ = userStateMachine.AddTransition(
+			auth.UserInVerificationState,
+			auth.UserVerifiedTransitionEvent,
+			auth.UserActiveState,
+		)
+
+		// block from any state
+		_ = userStateMachine.AddTransition(
+			auth.UserCreatedState,
+			auth.BlockUserTransitionEvent,
+			auth.UserBlockedState,
+		)
+
+		_ = userStateMachine.AddTransition(
+			auth.UserInVerificationState,
+			auth.BlockUserTransitionEvent,
+			auth.UserBlockedState,
+		)
+
+		_ = userStateMachine.AddTransition(
+			auth.UserActiveState,
+			auth.BlockUserTransitionEvent,
+			auth.UserBlockedState,
+		)
+
+		pixiecontext.GetCtxLogger(ctx).Debug("finished creating user %d state machine", userID)
+		err = userStateMachine.Save()
+		if err != nil {
+			pixiecontext.GetCtxLogger(ctx).Error("error saving machine %s to storage", userID)
+			return nil, err
+		}
+	}
+
+	return userStateMachine, nil
+}

@@ -1,0 +1,67 @@
+package notifications_data_layer
+
+import (
+	"context"
+
+	"github.com/pixie-sh/core-go/pkg/layer"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"github.com/pixie-sh/di-go"
+
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer/notifications_repositories"
+
+	"{{ .ModuleName }}/bundles"
+	internaldi "{{ .ModuleName }}/infra/di"
+)
+
+// NotificationsDataLayerConfiguration contains the configuration for the notifications data layer
+type NotificationsDataLayerConfiguration struct {
+	DatabaseORMConfiguration bundles.DatabaseORMConfiguration `json:"database_orm"`
+}
+
+func (n NotificationsDataLayerConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(n, lookupPath)
+}
+
+// NotificationsDataLayer provides access to notification-related repositories
+type NotificationsDataLayer struct {
+	layer.GenericDataLayer
+
+	config                      *NotificationsDataLayerConfiguration
+	UserFirebaseTokenRepository notifications_repositories.UserFirebaseTokenRepository
+	ActionsRepository           notifications_repositories.ActionsRepository
+	TemplatesRepository         notifications_repositories.TemplatesRepository
+	ActivityLogsRepository      notifications_repositories.ActivityLogsRepository
+}
+
+// NewNotificationsDataLayer creates a new NotificationsDataLayer
+func NewNotificationsDataLayer(_ context.Context, orm *database.Orm, layerConfig *NotificationsDataLayerConfiguration) (*NotificationsDataLayer, error) {
+	return &NotificationsDataLayer{
+		GenericDataLayer: layer.NewGenericDataLayer(orm),
+		config:           layerConfig,
+
+		UserFirebaseTokenRepository: notifications_repositories.NewUserFirebaseTokenRepository(orm.DB),
+		ActionsRepository:           notifications_repositories.NewActionsRepository(orm.DB),
+		TemplatesRepository:         notifications_repositories.NewTemplatesRepository(orm.DB),
+		ActivityLogsRepository:      notifications_repositories.NewActivityLogsRepository(orm.DB),
+	}, nil
+}
+
+// RegistryNotificationsDataLayerConfiguration registers the notifications data layer configuration
+func RegistryNotificationsDataLayerConfiguration(ctx di.Context, opts *di.RegistryOpts) (*NotificationsDataLayerConfiguration, error) {
+	return di.ConfigurationLookup[*NotificationsDataLayerConfiguration](ctx, opts)
+}
+
+// RegistryNotificationsDataLayer registers the notifications data layer
+func RegistryNotificationsDataLayer(ctx di.Context, opts *di.RegistryOpts) (*NotificationsDataLayer, error) {
+	cfg, err := di.CreateConfiguration[*NotificationsDataLayerConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	orm, err := di.Create[*bundles.DatabaseORM](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenDatabaseORM))
+	if err != nil {
+		return nil, err
+	}
+
+	return NewNotificationsDataLayer(ctx, orm.Orm, cfg)
+}

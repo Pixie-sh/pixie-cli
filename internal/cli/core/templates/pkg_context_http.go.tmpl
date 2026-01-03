@@ -1,0 +1,38 @@
+package http
+
+import (
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+
+	pixicontext "{{.ModuleName}}/pkg/context"
+	"{{.ModuleName}}/pkg/models/session_manager_models"
+)
+
+// SetCtxJWT sets the JWT token and data in the fiber context
+func SetCtxJWT(c http.ServerCtx, token string, data session_manager_models.JWT) {
+	c.Locals(pixicontext.LocalsRequestJWT, token)
+	c.Locals(pixicontext.LocalsRequestJWTData, data)
+
+	c.SetUserContext(pixicontext.SetCtxJWTToken(c.UserContext(), token))
+	c.SetUserContext(pixicontext.SetCtxJWT(c.UserContext(), data))
+}
+
+// GetCtxJWT retrieves the JWT data from the fiber context
+func GetCtxJWT(c http.ServerCtx) session_manager_models.JWT {
+	return c.Locals(pixicontext.LocalsRequestJWTData).(session_manager_models.JWT)
+}
+
+// GetCtxJWTToken retrieves the JWT token string from the fiber context
+func GetCtxJWTToken(c http.ServerCtx) string {
+	return c.Locals(pixicontext.LocalsRequestJWT).(string)
+}
+
+// SetCtxSession sets the session data in the fiber context
+func SetCtxSession(c http.ServerCtx, data session_manager_models.UntypedSession) {
+	c.Locals(pixicontext.LocalsRequestSessionData, data)
+	c.SetUserContext(pixicontext.SetCtxSession(c.UserContext(), data))
+}
+
+// GetCtxSession retrieves the session data from the fiber context
+func GetCtxSession(c http.ServerCtx) session_manager_models.UntypedSession {
+	return c.Locals(pixicontext.LocalsRequestSessionData).(session_manager_models.UntypedSession)
+}

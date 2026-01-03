@@ -1,0 +1,45 @@
+package uidgen
+
+import (
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+// DO NOT CHANGE THIS MAPPING
+// if any question or doubt please contact your manager.
+// Any changes here will break the system
+const (
+	// users
+	user        uid.Scope = 100
+	otp         uid.Scope = 101
+	userSession uid.Scope = 103
+	jwtSession  uid.Scope = 104
+
+	// Add your domain-specific scopes here
+	// Example:
+	// entity uid.Scope = 200
+)
+
+// Random generates a random UID without scope
+func Random() uid.UID {
+	return uid.New()
+}
+
+// User generates a scoped UID for users
+func User() uid.UID {
+	return uid.NewScoped(user)
+}
+
+// OTP generates a scoped UID for OTPs
+func OTP() uid.UID {
+	return uid.NewScoped(otp)
+}
+
+// UserSession generates a scoped UID for user sessions
+func UserSession() uid.UID {
+	return uid.NewScoped(userSession)
+}
+
+// JWTSession generates a scoped UID for JWT sessions
+func JWTSession() uid.UID {
+	return uid.NewScoped(jwtSession)
+}

@@ -1,0 +1,111 @@
+package notifications_services
+
+import (
+	"context"
+
+	"github.com/pixie-sh/core-go/pkg/services"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/di-go"
+
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer"
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer/notifications_entities"
+
+	internaldi "{{ .ModuleName }}/infra/di"
+)
+
+// FcmTokenServiceConfiguration contains the configuration for the FCM token service
+type FcmTokenServiceConfiguration struct {
+	NotificationDataLayer notifications_data_layer.NotificationsDataLayerConfiguration `json:"notifications_data_layer"`
+}
+
+func (f FcmTokenServiceConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(f, lookupPath)
+}
+
+// FcmTokenService manages Firebase Cloud Messaging tokens
+type FcmTokenService struct {
+	services.Service[FcmTokenService]
+
+	config    *FcmTokenServiceConfiguration
+	dataLayer *notifications_data_layer.NotificationsDataLayer
+}
+
+// RegistryFcmTokenServiceConfiguration registers the FCM token service configuration
+func RegistryFcmTokenServiceConfiguration(ctx di.Context, opts *di.RegistryOpts) (*FcmTokenServiceConfiguration, error) {
+	return di.ConfigurationLookup[*FcmTokenServiceConfiguration](ctx, opts)
+}
+
+// RegistryFcmTokenService registers the FCM token service
+func RegistryFcmTokenService(ctx di.Context, opts *di.RegistryOpts) (*FcmTokenService, error) {
+	cfg, err := di.CreateConfiguration[*FcmTokenServiceConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	dataLayer, err := di.Create[*notifications_data_layer.NotificationsDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenNotificationsDataLayer))
+	if err != nil {
+		return nil, err
+	}
+
+	return NewFcmTokenService(ctx, cfg, dataLayer)
+}
+
+// NewFcmTokenService creates a new FcmTokenService
+func NewFcmTokenService(_ context.Context, config *FcmTokenServiceConfiguration, dataLayer *notifications_data_layer.NotificationsDataLayer) (*FcmTokenService, error) {
+	us := FcmTokenService{}
+	us.Service = services.NewService(&us, NewFcmTokenServiceFrom)
+	us.config = config
+	us.dataLayer = dataLayer
+
+	return &us, nil
+}
+
+// NewFcmTokenServiceFrom creates a new FcmTokenService from an existing service
+func NewFcmTokenServiceFrom(service services.Service[FcmTokenService]) (*FcmTokenService, *services.Service[FcmTokenService]) {
+	us := &FcmTokenService{}
+	us.config = service.Instance.config
+	us.dataLayer = service.Instance.dataLayer
+	us.Service = services.NewService(us, nil)
+
+	return us, &us.Service
+}
+
+// CreateFcmToken creates a new FCM token for a user
+func (l FcmTokenService) CreateFcmToken(_ context.Context, userID uid.UID, fcmToken string, status notifications_entities.FirebaseTokenStatus) (notifications_entities.FirebaseToken, error) {
+	userFirebaseTokenRepository := l.dataLayer.UserFirebaseTokenRepository
+	if !l.TxNil() {
+		userFirebaseTokenRepository = l.dataLayer.UserFirebaseTokenRepository.WithTx(l.Tx)
+	}
+
+	return userFirebaseTokenRepository.CreateFcmToken(userID, fcmToken, status)
+}
+
+// UpdateFcmTokenStatus updates the status of an FCM token
+func (l FcmTokenService) UpdateFcmTokenStatus(_ context.Context, id uid.UID, status notifications_entities.FirebaseTokenStatus) (notifications_entities.FirebaseToken, error) {
+	userFirebaseTokenRepository := l.dataLayer.UserFirebaseTokenRepository
+	if !l.TxNil() {
+		userFirebaseTokenRepository = l.dataLayer.UserFirebaseTokenRepository.WithTx(l.Tx)
+	}
+
+	return userFirebaseTokenRepository.UpdateFcmTokenStatus(id, status)
+}
+
+// GetByUserIDAndToken retrieves an FCM token by user ID and token value
+func (l FcmTokenService) GetByUserIDAndToken(_ context.Context, userID uid.UID, token string) (notifications_entities.FirebaseToken, error) {
+	userFirebaseTokenRepository := l.dataLayer.UserFirebaseTokenRepository
+	if !l.TxNil() {
+		userFirebaseTokenRepository = l.dataLayer.UserFirebaseTokenRepository.WithTx(l.Tx)
+	}
+
+	return userFirebaseTokenRepository.GetByUserIDAndToken(userID, token)
+}
+
+// SetUserFcmTokensStatus sets the status of all FCM tokens for a user
+func (l FcmTokenService) SetUserFcmTokensStatus(_ context.Context, userID uid.UID, status notifications_entities.FirebaseTokenStatus) (notifications_entities.FirebaseToken, error) {
+	userFirebaseTokenRepository := l.dataLayer.UserFirebaseTokenRepository
+	if !l.TxNil() {
+		userFirebaseTokenRepository = l.dataLayer.UserFirebaseTokenRepository.WithTx(l.Tx)
+	}
+
+	return userFirebaseTokenRepository.SetUserFcmTokensStatus(userID, status)
+}

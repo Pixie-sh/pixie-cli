@@ -1,0 +1,98 @@
+package auth_repositories
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/infra/state_machine"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/database-helpers-go/database"
+
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_entities"
+)
+
+type UserRepository struct {
+	database.Repository[UserRepository]
+}
+
+func NewUserRepository(db *database.DB) UserRepository {
+	return UserRepository{database.NewRepository(db, NewUserRepository)}
+}
+
+func (r UserRepository) FindUserForLoginValidationByEmail(emailLowerCase string) (user auth_entities.User, e error) {
+	return r.FindUserByEmail(emailLowerCase)
+}
+
+func (r UserRepository) FindUserForLoginValidationByUserID(userID uid.UID) (user auth_entities.User, e error) {
+	return r.FindUserByID(userID)
+}
+
+func (r UserRepository) FindUserByEmail(emailLowerCase string) (user auth_entities.User, err error) {
+	return user, r.DB.
+		Model(&auth_entities.User{}).
+		Where("email_address = ?", emailLowerCase).
+		First(&user).Error
+}
+
+func (r UserRepository) FindUserByID(userID uid.UID) (user auth_entities.User, err error) {
+	query := r.DB.Model(&auth_entities.User{})
+	return user, query.
+		Where("id = ?", userID).
+		First(&user).
+		Error
+}
+
+func (r UserRepository) FindUserByIDUnscoped(userID uid.UID) (user auth_entities.User, err error) {
+	query := r.DB.Model(&auth_entities.User{})
+	return user, query.
+		Unscoped().
+		Where("id = ?", userID).
+		First(&user).
+		Error
+}
+
+func (r UserRepository) FindUserTypeByID(userID uid.UID) (auth_entities.UserTypeEnum, string, error) {
+	var result struct {
+		UserType auth_entities.UserTypeEnum
+		Status   string
+	}
+
+	err := r.DB.Model(&auth_entities.User{}).
+		Where("id = ?", userID).
+		Select("user_type, status").
+		First(&result).
+		Error
+	return result.UserType, result.Status, err
+}
+
+func (r UserRepository) UpdateLastLoginInfo(userID uid.UID, ip string, time time.Time) error {
+	return r.DB.Model(&auth_entities.User{}).
+		Where("id = ?", userID).
+		Updates(&auth_entities.User{
+			LastIp:    ip,
+			LastLogin: time,
+		}).Error
+}
+
+func (r UserRepository) UpdateStatus(userID uid.UID, state state_machine.State) error {
+	return r.DB.Model(&auth_entities.User{}).
+		Where("id = ?", userID).
+		Update("status", state).Error
+}
+
+func (r UserRepository) Create(user *auth_entities.User) error {
+	return r.DB.Create(user).Error
+}
+
+func (r UserRepository) UpdatePassword(userID uid.UID, hashedPassword string) error {
+	return r.DB.Model(&auth_entities.User{}).
+		Where("id = ?", userID).
+		Update("password", hashedPassword).Error
+}
+
+func (r UserRepository) UpdateProfile(userID uid.UID, fullName string) error {
+	return r.DB.Model(&auth_entities.User{}).
+		Where("id = ?", userID).
+		Updates(map[string]interface{}{
+			"full_name": fullName,
+		}).Error
+}

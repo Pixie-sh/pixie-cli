@@ -1,0 +1,62 @@
+package ms_authentication
+
+import (
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+	"github.com/pixie-sh/core-go/pkg/uid"
+
+	"{{ .ModuleName }}/bundles"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_business_layer"
+)
+
+type httpBoControllers struct {
+	server        http.Server
+	gates         *bundles.AuthorizationGatesBundle
+	businessLayer *authentication_business_layer.AuthenticationBusinessLayer
+}
+
+func (c httpBoControllers) SetupHTTP() error {
+	hasPermission := c.gates.IsAuthenticated.AllFeaturesOf
+	bo := c.server.Group("/backoffice", c.gates.IsAuthenticated.Authenticated(), hasPermission("admin.backoffice"))
+
+	bo.Get("/auth/sessions", c.gates.IsAuthenticated.Authenticated(), hasPermission("auth.sessions.list"), c.handleListSessions)
+	bo.Get("/auth/sessions/:sessionID", c.gates.IsAuthenticated.Authenticated(), hasPermission("auth.sessions.list"), c.handleGetSession)
+	bo.Get("/auth/sessions/user/:userID", c.gates.IsAuthenticated.Authenticated(), hasPermission("auth.sessions.list"), c.handleGetUserSessions)
+	bo.Delete("/auth/sessions/kill/:sessionID", c.gates.IsAuthenticated.Authenticated(), hasPermission("auth.sessions.delete"), c.handleKillSession)
+
+	return nil
+}
+
+// handleListSessions handles GET /backoffice/auth/sessions
+func (c httpBoControllers) handleListSessions(ctx http.ServerCtx) error {
+	response, err := c.businessLayer.ListSessions(ctx.Context())
+	return http.Response(ctx, response, err)
+}
+
+// handleGetSession handles GET /backoffice/auth/sessions/:sessionID
+func (c httpBoControllers) handleGetSession(ctx http.ServerCtx) error {
+	sessionID := ctx.Params("sessionID")
+
+	response, err := c.businessLayer.GetSessionBySessionID(ctx.Context(), sessionID)
+	return http.Response(ctx, response, err)
+}
+
+// handleGetUserSessions handles GET /backoffice/auth/sessions/user/:userID
+func (c httpBoControllers) handleGetUserSessions(ctx http.ServerCtx) error {
+	userIDStr := ctx.Params("userID")
+
+	userID, err := uid.FromString(userIDStr)
+	if err != nil {
+		return http.Response(ctx, "invalid user id", 400)
+	}
+
+	response, err := c.businessLayer.GetSessionsOfUserByUserID(ctx.Context(), userID)
+	return http.Response(ctx, response, err)
+}
+
+// handleKillSession handles DELETE /backoffice/auth/sessions/kill/:sessionID
+func (c httpBoControllers) handleKillSession(ctx http.ServerCtx) error {
+	sessionID := ctx.Params("sessionID")
+
+	err := c.businessLayer.DeleteSessionBySessionID(ctx.Context(), sessionID)
+	return http.Response(ctx, map[string]interface{}{"success": true}, err)
+}

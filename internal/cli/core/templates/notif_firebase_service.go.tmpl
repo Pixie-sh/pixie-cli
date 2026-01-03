@@ -1,0 +1,155 @@
+package notifications_services
+
+import (
+	"context"
+	"encoding/base64"
+
+	firebase "firebase.google.com/go"
+	"firebase.google.com/go/messaging"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/types"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/logger-go/logger"
+	"google.golang.org/api/option"
+
+	internaldi "{{ .ModuleName }}/infra/di"
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer"
+)
+
+// PushNotificationService defines the interface for push notification services
+type PushNotificationService interface {
+	SendPushNotificationToToken(userToken string, title string, message string, additionalData map[string]string) (string, error)
+	SendPushNotificationToUserId(userID uid.UID, title string, message string, additionalData map[string]string) (string, error)
+}
+
+// FirebaseServiceConfiguration contains the configuration for Firebase push notifications
+type FirebaseServiceConfiguration struct {
+	FirebaseSecretKey string `json:"firebase_secret_key"`
+}
+
+// FirebaseService implements PushNotificationService using Firebase Cloud Messaging
+type FirebaseService struct {
+	config                *FirebaseServiceConfiguration
+	getFcmTokensForUserID func(userID uid.UID) ([]string, error)
+	firebaseClient        *messaging.Client
+}
+
+// NewFirebaseService creates a new FirebaseService
+func NewFirebaseService(_ context.Context, config *FirebaseServiceConfiguration, getFcmTokensForUserID func(userID uid.UID) ([]string, error)) (FirebaseService, error) {
+	decodedKey, err := base64.StdEncoding.DecodeString(config.FirebaseSecretKey)
+	if err != nil {
+		logger.With("error", err).Error("Failed to decode firebase secret key")
+		return FirebaseService{}, err
+	}
+
+	opts := []option.ClientOption{option.WithCredentialsJSON(decodedKey)}
+
+	app, err := firebase.NewApp(context.Background(), nil, opts...)
+	if err != nil {
+		logger.Logger.With("error", err).Error("Failed to create firebase context")
+		return FirebaseService{}, err
+	}
+
+	fcmClient, err := app.Messaging(context.Background())
+
+	if err != nil {
+		logger.Logger.With("error", err).Error("Failed to get firebase client")
+		return FirebaseService{}, err
+	}
+
+	return FirebaseService{
+		config:                config,
+		getFcmTokensForUserID: getFcmTokensForUserID,
+		firebaseClient:        fcmClient,
+	}, nil
+}
+
+// SendPushNotificationToToken sends a push notification to a specific FCM token
+func (l FirebaseService) SendPushNotificationToToken(userToken string, title string, message string, additionalData map[string]string) (string, error) {
+	response, err := l.firebaseClient.Send(context.Background(), &messaging.Message{
+		Notification: &messaging.Notification{
+			Title: title,
+			Body:  message,
+		},
+		Token: userToken,
+		Data:  additionalData,
+	})
+
+	if err != nil {
+		logger.Logger.With("error", err).Error("Failed to send firebase notification")
+		return "", err
+	}
+
+	return response, nil
+}
+
+// SendPushNotificationToUserId sends a push notification to all tokens associated with a user ID
+func (l FirebaseService) SendPushNotificationToUserId(userID uid.UID, title string, message string, additionalData map[string]string) (string, error) {
+	userTokens, err := l.getFcmTokensForUserID(userID)
+	if err != nil {
+		logger.Logger.With("error", err).Error("Failed to fetch firebase user tokens")
+		return "", err
+	}
+
+	var lastResponse string
+	for _, token := range userTokens {
+		lastResponse, err = l.firebaseClient.Send(context.Background(), &messaging.Message{
+			Notification: &messaging.Notification{
+				Title: title,
+				Body:  message,
+			},
+			Token: token,
+			Data:  additionalData,
+		})
+
+		if err != nil {
+			logger.Logger.With("error", err).Error("Failed to send firebase notification")
+			return "", err
+		}
+	}
+
+	return lastResponse, nil
+}
+
+func (n *FirebaseServiceConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(n, lookupPath)
+}
+
+// RegistryNotificationsPushServiceConfiguration registers the Firebase service configuration
+func RegistryNotificationsPushServiceConfiguration(ctx di.Context, opts *di.RegistryOpts) (*FirebaseServiceConfiguration, error) {
+	return di.ConfigurationLookup[*FirebaseServiceConfiguration](ctx, opts)
+}
+
+// RegistryNotificationsPushService registers the Firebase push notification service
+func RegistryNotificationsPushService(ctx di.Context, opts *di.RegistryOpts) (PushNotificationService, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	cfg, err := di.CreateConfiguration[*FirebaseServiceConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	if types.IsEmpty(cfg) {
+		log.Warn("No firebase configuration provided. Push notification service not initialized")
+		return nil, nil
+	}
+
+	notificationsDataLayer, err := di.Create[*notifications_data_layer.NotificationsDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenNotificationsDataLayer))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenNotificationsDataLayer, internaldi.RegistryTokenNotificationsPushService)
+		return nil, err
+	}
+
+	firebaseService, err := NewFirebaseService(
+		ctx,
+		cfg,
+		notificationsDataLayer.UserFirebaseTokenRepository.GetFcmTokenByUserId,
+	)
+	if err != nil {
+		log.With("error", err).Error("Failed to create firebase service")
+		return nil, err
+	}
+
+	return firebaseService, nil
+}

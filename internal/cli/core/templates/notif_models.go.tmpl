@@ -1,0 +1,154 @@
+package notifications
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+// CreateTemplateRequest represents the request payload for creating a notification template
+type CreateTemplateRequest struct {
+	Name     string `json:"name" validate:"required,min=1,max=255"`
+	Language string `json:"language" validate:"required,oneof=en pt"`
+	Template []byte `json:"template" validate:"required"`
+}
+
+// UpdateTemplateRequest represents the request payload for updating a notification template
+type UpdateTemplateRequest struct {
+	Name     string `json:"name" validate:"required,min=1,max=255"`
+	Language string `json:"language" validate:"required,oneof=en pt"`
+	Template []byte `json:"template" validate:"required"`
+}
+
+// TemplateResponse represents the response payload for a notification template
+type TemplateResponse struct {
+	ID        uid.UID   `json:"id"`
+	Name      string    `json:"name"`
+	Language  string    `json:"language"`
+	Template  []byte    `json:"template,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// TemplateListResponse represents the response payload for listing templates
+type TemplateListResponse struct {
+	Templates []TemplateResponse `json:"templates"`
+	Total     int                `json:"total"`
+	Page      int                `json:"page,omitempty"`
+	PageSize  int                `json:"page_size,omitempty"`
+}
+
+// CreateActionRequest represents the request payload for creating a notification action
+type CreateActionRequest struct {
+	Name              string `json:"name" validate:"required,min=1,max=255"`
+	Language          string `json:"language" validate:"required,oneof=en pt"`
+	EventType         string `json:"event_type" validate:"required,max=100"`
+	DeliveryMethod    string `json:"delivery_method" validate:"required,oneof=email sms push_mobile push_web"`
+	ActionStatus      string `json:"action_status" validate:"required,oneof=active inactive"`
+	ActionPayload     any    `json:"action_payload" validate:"required"`
+	TemplateID        uid.UID `json:"template_id" validate:"required"`
+	ConditionTemplate string `json:"condition_template,omitempty"`
+}
+
+// UpdateActionRequest represents the request payload for updating a notification action
+type UpdateActionRequest struct {
+	Name              string `json:"name" validate:"required,min=1,max=255"`
+	Language          string `json:"language" validate:"required,oneof=en pt"`
+	EventType         string `json:"event_type" validate:"required,max=100"`
+	DeliveryMethod    string `json:"delivery_method" validate:"required,oneof=email sms push_mobile push_web"`
+	ActionStatus      string `json:"action_status" validate:"required,oneof=active inactive"`
+	ActionPayload     any    `json:"action_payload" validate:"required"`
+	TemplateID        uid.UID `json:"template_id" validate:"required"`
+	ConditionTemplate string `json:"condition_template,omitempty"`
+}
+
+// ActionResponse represents the response payload for a notification action
+type ActionResponse struct {
+	ID                uid.UID `json:"id"`
+	Name              string  `json:"name"`
+	Language          string  `json:"language"`
+	EventType         string  `json:"event_type"`
+	DeliveryMethod    string  `json:"delivery_method"`
+	ActionStatus      string  `json:"action_status"`
+	ActionPayload     any     `json:"action_payload"`
+	TemplateID        uid.UID `json:"template_id"`
+	ConditionTemplate string  `json:"condition_template,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// ActionListResponse represents the response payload for listing actions
+type ActionListResponse struct {
+	Actions  []ActionResponse `json:"actions"`
+	Total    int              `json:"total"`
+	Page     int              `json:"page,omitempty"`
+	PageSize int              `json:"page_size,omitempty"`
+}
+
+// ActivityLogResponse represents the response payload for a notification activity log
+type ActivityLogResponse struct {
+	ID          uid.UID `json:"id"`
+	PublicToken string  `json:"public_token"`
+	ActionID    uid.UID `json:"action_id"`
+	TemplateID  uid.UID `json:"template_id"`
+	Payload     any     `json:"payload"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// ActivityLogListResponse represents the response payload for listing activity logs
+type ActivityLogListResponse struct {
+	ActivityLogs []ActivityLogResponse `json:"activity_logs"`
+	Total        int                   `json:"total"`
+	Page         int                   `json:"page,omitempty"`
+	PageSize     int                   `json:"page_size,omitempty"`
+}
+
+// CreatePushNotificationRequest represents the request for creating a push notification
+type CreatePushNotificationRequest struct {
+	Title   string  `json:"title" validate:"required,max=255"`
+	Message string  `json:"message" validate:"required,max=1000"`
+	Action  string  `json:"action,omitempty" validate:"max=255"`
+	UserID  uid.UID `json:"user_id" validate:"required"`
+}
+
+// RegisterFcmTokenRequest represents the request for registering an FCM token
+type RegisterFcmTokenRequest struct {
+	FcmToken string `json:"fcm_token" validate:"required"`
+}
+
+// UpdateFcmTokenStatusRequest represents the request for updating an FCM token status
+type UpdateFcmTokenStatusRequest struct {
+	Status string `json:"status" validate:"required,oneof=active inactive"`
+}
+
+// FcmTokenResponse represents the response payload for an FCM token
+type FcmTokenResponse struct {
+	ID        uid.UID   `json:"id"`
+	UserID    uid.UID   `json:"user_id"`
+	FcmToken  string    `json:"fcm_token"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// EventTypeResponse represents the response payload for an event type
+type EventTypeResponse struct {
+	EventType            string           `json:"event_type"`
+	Descriptions         any              `json:"descriptions,omitempty"`
+	ActionDeliveryMethod map[string]int64 `json:"action_delivery_method"`
+}
+
+// DeliveryMethodSchemaResponse represents the response payload for delivery method schemas
+type DeliveryMethodSchemaResponse struct {
+	DeliveryMethod string `json:"delivery_method"`
+	Schema         any    `json:"schema"`
+}
+
+// NotificationErrorResponse represents error response for notification operations
+type NotificationErrorResponse struct {
+	Error   string `json:"error"`
+	Code    string `json:"code,omitempty"`
+	Field   string `json:"field,omitempty"`
+	Message string `json:"message"`
+}

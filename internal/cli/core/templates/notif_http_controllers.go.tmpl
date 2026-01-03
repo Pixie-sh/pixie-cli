@@ -1,0 +1,28 @@
+package ms_notifications
+
+import (
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+
+	"{{.ModuleName}}/bundles"
+	"{{.ModuleName}}/internal/domains/notifications/notifications_business_layer"
+)
+
+type httpControllers struct {
+	server        http.Server
+	gates         *bundles.AuthorizationGatesBundle
+	businessLayer *notifications_business_layer.NotificationsBusinessLayer
+}
+
+func (c httpControllers) SetupHTTP() error {
+	notificationsGroup := c.server.Group("/notifications")
+
+	// Public health endpoint
+	notificationsGroup.Get("/health", c.handleHealth)
+
+	return nil
+}
+
+// handleHealth handles GET /notifications/health
+func (c httpControllers) handleHealth(ctx http.ServerCtx) error {
+	return http.Response(ctx)
+}

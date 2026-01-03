@@ -1,0 +1,143 @@
+package auth
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/infra/state_machine"
+	"github.com/pixie-sh/core-go/pkg/models"
+	"github.com/pixie-sh/core-go/pkg/uid"
+
+	"{{ .ModuleName }}/pkg/models/session_manager_models"
+)
+
+// ======== User Model ========
+
+type User struct {
+	models.SoftDeletable
+
+	ID           uid.UID `json:"id"`
+	EmailAddress string  `json:"email_address"`
+	Type         string  `json:"type"`
+	Status       string  `json:"status"`
+
+	LastLogin time.Time `json:"last_login,omitempty"`
+	LastIp    string    `json:"last_ip,omitempty"`
+}
+
+// ======== User States ========
+
+// UserState is an alias for state_machine.State for user states
+type UserState = state_machine.State
+
+var (
+	// UserCreatedState represents a newly created user (not yet verified)
+	UserCreatedState UserState = "UserCreated"
+	// UserInVerificationState represents a user in the verification process
+	UserInVerificationState UserState = "InVerification"
+	// UserActiveState represents an active verified user
+	UserActiveState UserState = "Active"
+	// UserBlockedState represents a blocked user
+	UserBlockedState UserState = "Blocked"
+)
+
+// Legacy const names for compatibility
+const (
+	UserStatePendingEmailVerification state_machine.State = "pending_email_verification"
+	UserStateActive                   state_machine.State = "active"
+	UserStateSuspended                state_machine.State = "suspended"
+	UserStateDeleted                  state_machine.State = "deleted"
+)
+
+// ======== User State Transition Events ========
+
+// UserStateMachineTransitionEvent is an alias for state_machine.Event
+type UserStateMachineTransitionEvent = state_machine.Event
+
+var (
+	UserAddedTransitionEvent    UserStateMachineTransitionEvent = "UserAdded"
+	UserVerifiedTransitionEvent UserStateMachineTransitionEvent = "UserVerified"
+	BlockUserTransitionEvent    UserStateMachineTransitionEvent = "BlockUser"
+)
+
+// Legacy const names for compatibility (deprecated)
+const (
+	LegacyUserVerifiedTransitionEvent   UserStateMachineTransitionEvent = "user_verified"
+	LegacySuspendUserTransitionEvent    UserStateMachineTransitionEvent = "suspend_user"
+	LegacyDeleteUserTransitionEvent     UserStateMachineTransitionEvent = "delete_user"
+	LegacyReactivateUserTransitionEvent UserStateMachineTransitionEvent = "reactivate_user"
+)
+
+// ======== Request DTOs ========
+
+type LoginCredentialsRequest struct {
+	Email    string                                `json:"email" validate:"required"`
+	Password string                                `json:"password" validate:"required,min=8"`
+	Channel  session_manager_models.SessionChannel `json:"channel" validate:"required,isEnum:SessionChannel"`
+	FCMToken string                                `json:"fcm_token" validate:"omitempty"`
+}
+
+type LoginAsCredentialsRequest struct {
+	LoginAsEmail string                                `json:"login_as_email" validate:"required"`
+	Email        string                                `json:"email" validate:"required"`
+	Password     string                                `json:"password" validate:"required"`
+	Channel      session_manager_models.SessionChannel `json:"channel" validate:"required,isEnum:SessionChannel"`
+}
+
+type RegisterPartnerRequest struct {
+	FullName    string `json:"full_name" validate:"required"`
+	Email       string `json:"email" validate:"required,email"`
+	Password    string `json:"password" validate:"required,min=8"`
+	AcceptedTOS bool   `json:"accepted_tos" validate:"boolean"`
+}
+
+type PasswordRecoveryRequest struct {
+	Email string `json:"email" validate:"required"`
+}
+
+type VerifyPasswordRecoveryRequest struct {
+	PasswordRecoveryRequest
+
+	Code     string `json:"code" validate:"required"`
+	Password string `json:"password" validate:"required,min=8"`
+}
+
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" validate:"required"`
+	NewPassword     string `json:"new_password" validate:"required,not_equal=CurrentPassword"`
+}
+
+type VerifyOTPRequest struct {
+	OTP string `json:"otp" validate:"required" validate:"min=6,max=6"`
+}
+
+type UpdateUserProfileRequest struct {
+	FullName     string `json:"full_name" validate:"required"`
+	EmailAddress string `json:"email_address"`
+}
+
+// ======== Response DTOs ========
+
+type LoginResponse struct {
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+}
+
+type RegisterLoginResponse struct {
+	LoginResponse
+
+	CurrentState state_machine.State `json:"current_state,omitempty"`
+}
+
+type UserProfile struct {
+	ID           uid.UID    `json:"id"`
+	EmailAddress string     `json:"email_address"`
+	FullName     string     `json:"full_name"`
+	UserType     string     `json:"user_type"`
+	Status       string     `json:"status"`
+	LastLogin    *time.Time `json:"last_login,omitempty"`
+	LastIp       string     `json:"last_ip,omitempty"`
+}
+
+type UpdateUserProfileResponse struct {
+	UserProfile
+}

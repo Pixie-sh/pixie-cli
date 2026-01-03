@@ -1,0 +1,56 @@
+package context
+
+import (
+	"context"
+
+	sessionmanagermodels "{{.ModuleName}}/pkg/models/session_manager_models"
+)
+
+// Context local keys for storing request-scoped data
+const (
+	LocalsRequestJWT         = "request_jwt"
+	LocalsRequestJWTData     = "request_jwt_data"
+	LocalsRequestSessionData = "request_session_data"
+)
+
+// GetCtxJWTToken retrieves the JWT token string from context
+func GetCtxJWTToken(ctx context.Context) string {
+	jwt, ok := ctx.Value(LocalsRequestJWT).(string)
+	if !ok {
+		return ""
+	}
+	return jwt
+}
+
+// SetCtxJWTToken sets the JWT token string in context
+func SetCtxJWTToken(ctx context.Context, jwt string) context.Context {
+	return context.WithValue(ctx, LocalsRequestJWT, jwt)
+}
+
+// GetCtxJWT retrieves the JWT data from context
+func GetCtxJWT(ctx context.Context) sessionmanagermodels.JWT {
+	jwt, ok := ctx.Value(LocalsRequestJWTData).(sessionmanagermodels.JWT)
+	if !ok {
+		return sessionmanagermodels.JWT{}
+	}
+	return jwt
+}
+
+// SetCtxJWT sets the JWT data in context
+func SetCtxJWT(ctx context.Context, jwt sessionmanagermodels.JWT) context.Context {
+	return context.WithValue(ctx, LocalsRequestJWTData, jwt)
+}
+
+// GetCtxSession retrieves the session data from context
+func GetCtxSession(ctx context.Context) sessionmanagermodels.UntypedSession {
+	session, ok := ctx.Value(LocalsRequestSessionData).(sessionmanagermodels.UntypedSession)
+	if !ok {
+		return sessionmanagermodels.UntypedSession{}
+	}
+	return session
+}
+
+// SetCtxSession sets the session data in context
+func SetCtxSession(ctx context.Context, session sessionmanagermodels.UntypedSession) context.Context {
+	return context.WithValue(ctx, LocalsRequestSessionData, session)
+}

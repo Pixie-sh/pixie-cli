@@ -1,0 +1,62 @@
+package notifications_repositories
+
+import (
+	"context"
+
+	"github.com/pixie-sh/database-helpers-go/database"
+	"github.com/pixie-sh/database-helpers-go/pipeline"
+	"github.com/pixie-sh/database-helpers-go/pipeline/operators"
+	"github.com/pixie-sh/errors-go"
+
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer/notifications_entities"
+)
+
+// ActivityLogsRepository handles database operations for notification activity logs
+type ActivityLogsRepository struct {
+	database.Repository[ActivityLogsRepository]
+}
+
+// NewActivityLogsRepository creates a new ActivityLogsRepository
+func NewActivityLogsRepository(db *database.DB) ActivityLogsRepository {
+	return ActivityLogsRepository{database.NewRepository(
+		db,
+		NewActivityLogsRepository,
+	)}
+}
+
+// Insert creates a new activity log entry
+func (r ActivityLogsRepository) Insert(entity notifications_entities.ActivityLog) (notifications_entities.ActivityLog, error) {
+	return entity, r.DB.Model(&entity).Save(&entity).Error
+}
+
+// GetNotificationByPublicToken retrieves a notification payload by public token
+func (r ActivityLogsRepository) GetNotificationByPublicToken(publicToken string) (any, error) {
+	var notification any
+	return notification, r.DB.Model(&notifications_entities.ActivityLog{}).
+		Select("payload->>'notification' as notification").
+		Where("public_token = ?", publicToken).
+		Scan(&notification).Error
+}
+
+// GetAllThroughPipeline retrieves all activity logs using a pipeline
+func (r ActivityLogsRepository) GetAllThroughPipeline(ctx context.Context, pipe *pipeline.Pipeline) (*operators.UntypedPaginatedResult, error) {
+	db := r.DB.Model(&notifications_entities.ActivityLog{}).
+		Joins("Action").
+		Joins("Template")
+
+	exec, err := pipe.ExecWithPassable(ctx, operators.NewResult(db))
+	if err != nil {
+		return nil, err
+	}
+
+	if exec.Error() != nil {
+		return nil, exec.Error()
+	}
+
+	vendors, ok := exec.GetPassable().(*operators.UntypedPaginatedResult)
+	if !ok {
+		return nil, errors.New("cannot get paginated result").WithErrorCode(errors.DBErrorCode)
+	}
+
+	return vendors, nil
+}

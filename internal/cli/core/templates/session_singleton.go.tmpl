@@ -1,0 +1,45 @@
+package session_manager
+
+import (
+	"context"
+
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/errors-go"
+)
+
+var singletonSessionManager *SessionManager = nil
+
+// SetManager sets the global session manager singleton
+func SetManager(ctx context.Context, sm *SessionManager) {
+	if singletonSessionManager != nil {
+		pixiecontext.GetCtxLogger(ctx).Error("session_manager.singletonSessionManager already set. ignored.")
+		return
+	}
+
+	singletonSessionManager = sm
+}
+
+// GetManager returns the session manager (custom or singleton)
+func GetManager(customSessionManager ...*SessionManager) *SessionManager {
+	if singletonSessionManager == nil && len(customSessionManager) == 0 {
+		panic(errors.New("session_manager.GetManager singletonSessionManager not set").WithErrorCode(errors.ServerErrorErrorCode))
+	}
+
+	var manager = singletonSessionManager
+	if len(customSessionManager) > 0 {
+		manager = customSessionManager[0]
+	}
+
+	if manager == nil {
+		panic(errors.New("session_manager.GetManager customSessionManager[0] is nil").WithErrorCode(errors.ServerErrorErrorCode))
+	}
+
+	return manager
+}
+
+// Must panics if the session manager is not initialized
+func Must(_ context.Context) {
+	if singletonSessionManager == nil {
+		panic(errors.New("session_manager.Must singletonSessionManager not set").WithErrorCode(errors.ServerErrorErrorCode))
+	}
+}

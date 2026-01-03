@@ -1,0 +1,259 @@
+package ms_authentication
+
+import (
+	"fmt"
+
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/models/serializer"
+	"github.com/pixie-sh/errors-go"
+
+	"{{ .ModuleName }}/bundles"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_business_layer"
+	httpcontext "{{ .ModuleName }}/pkg/context/http"
+	"{{ .ModuleName }}/pkg/models/auth"
+)
+
+type httpControllers struct {
+	server               http.Server
+	gates                *bundles.AuthorizationGatesBundle
+	businessLayer        *authentication_business_layer.AuthenticationBusinessLayer
+	passwordBusiness     *authentication_business_layer.PasswordBusinessLayer
+	registrationBusiness *authentication_business_layer.RegistrationBusinessLayer
+	userProfileBusiness  *authentication_business_layer.UserProfileBusinessLayer
+}
+
+func (c httpControllers) SetupHTTP() error {
+	authGroup := c.server.Group("/authentication")
+
+	// Public routes (no auth required)
+	authGroup.Post("/auth/login", c.gates.IsAuthenticated.NotAuthenticated(), c.handleLogin)
+	authGroup.Post("/auth/login-as", c.gates.IsAuthenticated.NotAuthenticated(), c.handleLoginAs)
+	authGroup.Post("/auth/password-recovery/send/:byType", c.gates.IsAuthenticated.NotAuthenticated(), c.handlePasswordRecoverySend)
+	authGroup.Post("/auth/password-recovery/verify", c.gates.IsAuthenticated.NotAuthenticated(), c.handlePasswordRecoveryVerify)
+
+	// Protected routes (auth required)
+	authGroup.Get("/auth/login/keep-alive", c.gates.IsAuthenticated.Authenticated(), c.handleKeepAlive)
+	authGroup.Delete("/auth/logout", c.gates.IsAuthenticated.Authenticated(), c.handleLogout)
+	authGroup.Post("/auth/change-password", c.gates.IsAuthenticated.Authenticated(), c.handleChangePassword)
+
+	registrationGroup := c.server.Group("/registration")
+	registrationGroup.Post("/register/user", c.handleRegisterPartner)
+	registrationGroup.Post("/register/user/otp/send", c.gates.IsAuthenticated.AuthenticatedInactive(), c.handleSendOTP)
+	registrationGroup.Post("/register/user/otp/verify", c.gates.IsAuthenticated.AuthenticatedInactive(), c.handleVerifyOTP)
+	registrationGroup.Get("/register/user/current-state", c.gates.IsAuthenticated.AuthenticatedOrAuthenticatedInactive(), c.handleGetCurrentState)
+
+	// User profile routes
+	userGroup := c.server.Group("/user")
+	userGroup.Get("/profile", c.gates.IsAuthenticated.Authenticated(), c.handleGetUserProfile)
+	userGroup.Put("/profile", c.gates.IsAuthenticated.Authenticated(), c.handleUpdateUserProfile)
+
+	return nil
+}
+
+// handleLogin handles POST /auth/login
+func (c httpControllers) handleLogin(ctx http.ServerCtx) error {
+	var credentials auth.LoginCredentialsRequest
+	if err := serializer.DeserializeFromFn(ctx.BodyParser, &credentials); err != nil {
+		return http.Response(ctx, err)
+	}
+
+	ip := ctx.IP()
+	response, err := c.businessLayer.Login(ctx.Context(), credentials, ip)
+	return http.Response(ctx, response, err)
+}
+
+// handleLoginAs handles POST /auth/login-as
+func (c httpControllers) handleLoginAs(ctx http.ServerCtx) error {
+	var credentials auth.LoginAsCredentialsRequest
+	if err := serializer.DeserializeFromFn(ctx.BodyParser, &credentials); err != nil {
+		return http.Response(ctx, err)
+	}
+
+	ip := ctx.IP()
+	response, err := c.businessLayer.LoginAs(ctx.Context(), credentials, ip)
+	return http.Response(ctx, response, err)
+}
+
+// handleKeepAlive handles GET /auth/login/keep-alive
+func (c httpControllers) handleKeepAlive(ctx http.ServerCtx) error {
+	ip := ctx.IP()
+
+	jwt := httpcontext.GetCtxJWT(ctx)
+	jwtEncoded := httpcontext.GetCtxJWTToken(ctx)
+
+	err := c.businessLayer.KeepTokenAlive(ctx.Context(), jwtEncoded, jwt, ip)
+	return http.Response(ctx, err)
+}
+
+// handleLogout handles DELETE /auth/logout
+func (c httpControllers) handleLogout(ctx http.ServerCtx) error {
+	ip := ctx.IP()
+
+	jwt := httpcontext.GetCtxJWT(ctx)
+	session := httpcontext.GetCtxSession(ctx)
+	jwtEncoded := httpcontext.GetCtxJWTToken(ctx)
+
+	err := c.businessLayer.Logout(ctx.Context(), jwtEncoded, jwt, session, ip)
+	return http.Response(ctx, err)
+}
+
+// handlePasswordRecoverySend handles POST /auth/password-recovery/send/:byType
+func (c httpControllers) handlePasswordRecoverySend(ctx http.ServerCtx) error {
+	var req auth.PasswordRecoveryRequest
+	if err := serializer.DeserializeFromFn(ctx.BodyParser, &req); err != nil {
+		return http.Response(ctx, err)
+	}
+
+	ip := ctx.IP()
+	userAgent := ctx.Get("User-Agent")
+	byType := ctx.Params("byType")
+
+	switch byType {
+	case "email":
+		if len(req.Email) == 0 {
+			return http.Response(ctx, errors.NewValidationError("email is required", &errors.FieldError{
+				Field:   "email",
+				Rule:    "requiredFieldMissing",
+				Param:   req.Email,
+				Message: "email is required",
+			},
+			))
+		}
+
+		err := c.passwordBusiness.SendPasswordRecoveryByEmail(ctx.Context(), ip, userAgent, req.Email)
+		return http.Response(ctx, err)
+	default:
+		return http.Response(ctx, errors.NewValidationError("byType not supported", &errors.FieldError{
+			Field:   "byType",
+			Rule:    "byTypeNotSupported",
+			Param:   byType,
+			Message: fmt.Sprintf("byType '%s' not supported", byType),
+		}))
+	}
+}
+
+// handlePasswordRecoveryVerify handles POST /auth/password-recovery/verify
+func (c httpControllers) handlePasswordRecoveryVerify(ctx http.ServerCtx) error {
+	var req auth.VerifyPasswordRecoveryRequest
+	if err := serializer.DeserializeFromFn(ctx.BodyParser, &req); err != nil {
+		return http.Response(ctx, err)
+	}
+
+	var reqType string
+	var value string
+	if len(req.Email) > 0 {
+		reqType = "email"
+		value = req.Email
+	} else {
+		return http.Response(ctx, errors.NewValidationError("email is required", &errors.FieldError{
+			Field:   "email",
+			Rule:    "requiredFieldMissing",
+			Param:   req.Email,
+			Message: "email is required",
+		},
+		))
+	}
+
+	err := c.passwordBusiness.VerifyPasswordRecoveryWithCodeBy(ctx.Context(), reqType, value, req.Code, req.Password)
+	return http.Response(ctx, err)
+}
+
+// handleChangePassword handles POST /auth/change-password
+func (c httpControllers) handleChangePassword(ctx http.ServerCtx) error {
+	var req auth.ChangePasswordRequest
+	if err := serializer.DeserializeFromFn(ctx.BodyParser, &req); err != nil {
+		return http.Response(ctx, err)
+	}
+
+	// Get JWT from session manager context
+	jwt := httpcontext.GetCtxJWT(ctx)
+
+	err := c.passwordBusiness.PasswordChangeByUserID(ctx.Context(), jwt.User.ID, req.CurrentPassword, req.NewPassword)
+	return http.Response(ctx, err)
+}
+
+// handleRegisterPartner handles POST /register/user
+func (c httpControllers) handleRegisterPartner(ctx http.ServerCtx) error {
+	var req auth.RegisterPartnerRequest
+	if err := serializer.DeserializeFromFn(ctx.BodyParser, &req); err != nil {
+		return http.Response(ctx, err)
+	}
+
+	ip := ctx.IP()
+
+	response, err := c.registrationBusiness.RegisterUser(
+		ctx.Context(),
+		req.FullName,
+		req.Email,
+		req.Password,
+		req.AcceptedTOS,
+		ip,
+	)
+	return http.Response(ctx, response, err)
+}
+
+// handleGetCurrentState handles GET /register/user/current-state
+func (c httpControllers) handleGetCurrentState(ctx http.ServerCtx) error {
+	jwt := httpcontext.GetCtxJWT(ctx)
+	return http.Response(ctx, jwt.User.Status, nil)
+}
+
+// handleSendOTP handles POST /register/user/otp/send
+func (c httpControllers) handleSendOTP(ctx http.ServerCtx) error {
+	jwt := httpcontext.GetCtxJWT(ctx)
+	ev, err := c.registrationBusiness.GenerateOTP(ctx.Context(), jwt.User.ID, jwt.User.Email, ctx.IP())
+	if err != nil {
+		return http.Response(ctx, err)
+	}
+
+	err = ev.Emit(ctx.Context())
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx.Context()).
+			With("ev", ev).
+			With("error", err).
+			Error("Failed to emit event", err)
+
+		err = errors.NewValidationError("unable to trigger OTP verification")
+	}
+
+	return http.Response(ctx, err)
+}
+
+// handleVerifyOTP handles POST /register/user/otp/verify
+func (c httpControllers) handleVerifyOTP(ctx http.ServerCtx) error {
+	var req auth.VerifyOTPRequest
+	if err := ctx.BodyParser(&req); err != nil {
+		return http.Response(ctx, "Invalid request body", 400)
+	}
+
+	jwt := httpcontext.GetCtxJWT(ctx)
+	ip := ctx.IP()
+	res, err := c.registrationBusiness.VerifyOTP(ctx.Context(), jwt.User.ID, jwt.User.Email, ip, req)
+	return http.Response(ctx, res, err)
+}
+
+// handleGetUserProfile handles GET /user/profile
+func (c httpControllers) handleGetUserProfile(ctx http.ServerCtx) error {
+	jwt := httpcontext.GetCtxJWT(ctx)
+
+	profile, err := c.userProfileBusiness.GetUserProfile(ctx.Context(), jwt.User.ID)
+	return http.Response(ctx, profile, err)
+}
+
+// handleUpdateUserProfile handles PUT /user/profile
+func (c httpControllers) handleUpdateUserProfile(ctx http.ServerCtx) error {
+	var req auth.UpdateUserProfileRequest
+	if err := serializer.DeserializeFromFn(ctx.BodyParser, &req); err != nil {
+		return http.Response(ctx, err)
+	}
+
+	jwt := httpcontext.GetCtxJWT(ctx)
+
+	response, err := c.userProfileBusiness.UpdateUserProfile(ctx.Context(), jwt.User.ID, req)
+	if err != nil {
+		return http.Response(ctx, err)
+	}
+
+	return http.Response(ctx, response)
+}
