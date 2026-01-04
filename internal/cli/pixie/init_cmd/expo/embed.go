@@ -1,6 +1,6 @@
-package templates
+package expo
 
 import "embed"
 
-//go:embed *.tmpl
+//go:embed templates/*.tmpl
 var TemplateFS embed.FS

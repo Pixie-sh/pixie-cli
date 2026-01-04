@@ -6,15 +6,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/pixie-sh/pixie-cli/internal/cli/core/bootstrap_cmd"
+	"github.com/pixie-sh/pixie-cli/internal/cli/pixie/init_cmd"
 	"github.com/pixie-sh/pixie-cli/internal/version"
 )
 
 func main() {
 	rootCmd := &cobra.Command{
 		Use:     "pixie",
-		Short:   "Pixie CLI - Backend Project Generator",
-		Long:    "Pixie CLI generates complete Go backend projects with authentication, notifications, and custom microservices.",
+		Short:   "Pixie CLI - Multi-Stack Project Generator",
+		Long:    "Pixie CLI generates complete projects for Go backend, Angular frontend, and Expo mobile applications.",
 		Version: version.Info(),
 	}
 
@@ -26,7 +26,7 @@ func main() {
 	rootCmd.PersistentFlags().String("env", "", "Path to environment file")
 
 	// Register commands
-	rootCmd.AddCommand(bootstrap_cmd.BootstrapCmd())
+	rootCmd.AddCommand(init_cmd.InitCmd()) // Multi-stack init command
 
 	// Add version command for explicit version info
 	rootCmd.AddCommand(&cobra.Command{

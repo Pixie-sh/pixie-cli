@@ -33,7 +33,7 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 # Package paths
 MODULE := $(shell go list -m)
 VERSION_PKG := $(MODULE)/internal/version
-MAIN_PACKAGE := ./cmd/cli/cli_core
+MAIN_PACKAGE := ./cmd/cli/cli_pixie
 
 # Build flags
 LDFLAGS := -s -w \
