@@ -1,0 +1,68 @@
+package {{.ProjectNameSnake}}
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/env"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/spf13/cobra"
+
+	"{{.ModuleName}}/infra/version"
+)
+
+type Cli struct {
+	ctx     context.Context
+	rootCmd *cobra.Command
+}
+
+func (c *Cli) addAllCommands() *Cli {
+	for _, cmd := range allCommands {
+		setPreRunHooks(c, cmd)
+		c.AddCommand(cmd)
+	}
+
+	return c
+}
+
+func (c *Cli) Execute() error {
+	c.rootCmd.SilenceErrors = true
+	c.rootCmd.SilenceUsage = true
+
+	err := c.rootCmd.ExecuteContext(c.ctx)
+	if err != nil {
+		c.rootCmd.PrintErrln(err)
+		os.Exit(1)
+	}
+
+	return nil
+}
+
+func (c *Cli) AddCommand(cmd *cobra.Command) *Cli {
+	c.rootCmd.AddCommand(cmd)
+	return c
+}
+
+// Execute the cli instance
+func Execute(ctx context.Context) error {
+	checkEnv()
+
+	rootCmd := &cobra.Command{
+		Use:     "{{.CLIName}}",
+		Short:   fmt.Sprintf("{{.ProjectNameSnake}} command line interface; running with scope %s", env.EnvScope()),
+		Version: fmt.Sprintf("%s-%s", version.Version, version.Commit),
+	}
+
+	rootCmd.PersistentFlags().StringP("env", "e", "", "env file path (optional)")
+	rootCmd.PersistentFlags().StringP("config", "c", "", "config file path (optional)")
+
+	u := uid.New()
+	ctx = pixiecontext.SetCtxTraceID(ctx, u.String())
+	rootCmd.SetContext(ctx)
+
+	cli := Cli{ctx: ctx, rootCmd: rootCmd}
+	cli.addAllCommands()
+	return cli.Execute()
+}

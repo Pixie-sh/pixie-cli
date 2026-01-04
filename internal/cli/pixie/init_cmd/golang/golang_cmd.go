@@ -22,6 +22,7 @@ type Options struct {
 	Microservices []string // Microservices to generate
 	Force         bool     // Overwrite existing files
 	ProjectMS     string   // Custom name for the project microservice
+	WithCLI       bool     // Generate CLI tool
 }
 
 // MicroserviceConfig defines configuration for a microservice to generate
@@ -43,6 +44,8 @@ type DomainInfo struct {
 type TemplateData struct {
 	ProjectName         string
 	ProjectMS           string
+	ProjectNameSnake    string // snake_case version for CLI paths
+	CLIName             string // CLI binary name (cli_<project_snake>)
 	ServiceName         string
 	ServiceNameCamel    string
 	DomainName          string
@@ -99,6 +102,7 @@ The generated project includes:
   - Domain layers (internal/domains/*)
   - Configuration files (misc/configs/*.json)
   - Infrastructure (bundles/, infra/)
+  - CLI tool (cmd/cli/cli_<project>/, internal/cli/<project>/)
   - go.mod, Makefile, docker-compose.yaml
   - GitHub Actions CI/CD workflows
   - E2E test infrastructure
@@ -118,6 +122,9 @@ Examples:
 
   # Force overwrite existing files
   pixie init golang --name my-backend --module github.com/company/my-backend --force
+
+  # Initialize without CLI tool generation
+  pixie init golang --name my-backend --module github.com/company/my-backend --with-cli=false
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, _ := cmd.Flags().GetString("name")
@@ -126,6 +133,7 @@ Examples:
 			microservices, _ := cmd.Flags().GetStringSlice("microservices")
 			force, _ := cmd.Flags().GetBool("force")
 			projectMS, _ := cmd.Flags().GetString("project-ms")
+			withCLI, _ := cmd.Flags().GetBool("with-cli")
 
 			opts := Options{
 				Name:          name,
@@ -134,6 +142,7 @@ Examples:
 				Microservices: microservices,
 				Force:         force,
 				ProjectMS:     projectMS,
+				WithCLI:       withCLI,
 			}
 
 			return Run(opts)
@@ -149,6 +158,7 @@ Examples:
 	cmd.Flags().StringSlice("microservices", []string{"authentication", "notifications", "project"}, "Microservices to generate")
 	cmd.Flags().Bool("force", false, "Force overwrite existing files")
 	cmd.Flags().String("project-ms", "project", "Custom name for the project microservice (default: project)")
+	cmd.Flags().Bool("with-cli", true, "Generate CLI tool for the project")
 
 	// Mark required flags
 	cmd.MarkFlagRequired("name")
@@ -167,7 +177,8 @@ func Run(opts Options) error {
 	fmt.Printf("Initializing Go backend project: %s\n", opts.Name)
 	fmt.Printf("   Module: %s\n", opts.Module)
 	fmt.Printf("   Output: %s\n", opts.Output)
-	fmt.Printf("   Microservices: %s\n\n", strings.Join(opts.Microservices, ", "))
+	fmt.Printf("   Microservices: %s\n", strings.Join(opts.Microservices, ", "))
+	fmt.Printf("   CLI Tool: %v\n\n", opts.WithCLI)
 
 	// Generate GitHub Actions workflows first
 	fmt.Println("Generating GitHub Actions workflows...")
@@ -195,6 +206,14 @@ func Run(opts Options) error {
 		fmt.Printf("\nGenerating microservice: %s\n", msConfig.Name)
 		if err := generateMicroserviceFromConfig(msConfig, opts); err != nil {
 			return errors.Wrap(err, "failed to generate microservice %s", msConfig.Name)
+		}
+	}
+
+	// Generate CLI tool if requested
+	if opts.WithCLI {
+		fmt.Println("\nGenerating CLI tool...")
+		if err := generateCLITool(opts); err != nil {
+			return errors.Wrap(err, "failed to generate CLI tool")
 		}
 	}
 
@@ -750,6 +769,9 @@ func getEnabledFeatures(features map[string]bool) []string {
 
 // printNextSteps prints the next steps after initialization
 func printNextSteps(opts Options) {
+	projectSnake := toSnakeCase(opts.Name)
+	cliName := "cli_" + projectSnake
+
 	fmt.Printf("Next steps:\n\n")
 	fmt.Printf("1. Navigate to the project directory:\n")
 	fmt.Printf("   cd %s\n\n", opts.Output)
@@ -764,5 +786,56 @@ func printNextSteps(opts Options) {
 	fmt.Printf("   make run MS=authentication\n\n")
 	fmt.Printf("6. Run tests:\n")
 	fmt.Printf("   make test\n\n")
+	if opts.WithCLI {
+		fmt.Printf("7. Build and run the CLI tool:\n")
+		fmt.Printf("   go build -o %s ./cmd/cli/%s\n", cliName, cliName)
+		fmt.Printf("   ./%s --help\n\n", cliName)
+	}
 	fmt.Printf("For more information, see README.md\n")
+}
+
+// toSnakeCase converts a string to snake_case (replaces hyphens with underscores)
+func toSnakeCase(s string) string {
+	return strings.ReplaceAll(s, "-", "_")
+}
+
+// generateCLITool generates the CLI tool files for the project
+func generateCLITool(opts Options) error {
+	projectSnake := toSnakeCase(opts.Name)
+	cliName := "cli_" + projectSnake
+
+	data := TemplateData{
+		ProjectName:      opts.Name,
+		ProjectNameSnake: projectSnake,
+		CLIName:          cliName,
+		ModuleName:       opts.Module,
+		Timestamp:        time.Now().Format(time.RFC3339),
+	}
+
+	cliTemplates := []struct {
+		templateFile string
+		outputPath   string
+	}{
+		{"cli_application.go.tmpl", filepath.Join(opts.Output, "cmd/cli", cliName, "application.go")},
+		{"cli_main.go.tmpl", filepath.Join(opts.Output, "internal/cli", projectSnake, "cli.go")},
+		{"cli_all_commands.go.tmpl", filepath.Join(opts.Output, "internal/cli", projectSnake, "all_commands.go")},
+		{"cli_setup_cmd.go.tmpl", filepath.Join(opts.Output, "internal/cli", projectSnake, "setup_cmd.go")},
+		{"cli_models_configuration.go.tmpl", filepath.Join(opts.Output, "internal/cli", projectSnake, "models/configuration.go")},
+		{"cli_pkg_context.go.tmpl", filepath.Join(opts.Output, "internal/cli", projectSnake, "cli_pkg/context.go")},
+	}
+
+	for _, mapping := range cliTemplates {
+		if !opts.Force && shared.FileExists(mapping.outputPath) {
+			fmt.Printf("   WARNING: Skipping %s (file exists)\n", mapping.outputPath)
+			continue
+		}
+
+		fmt.Printf("   Generating %s\n", mapping.outputPath)
+
+		if err := generateFileFromTemplate(mapping.templateFile, mapping.outputPath, data); err != nil {
+			return errors.Wrap(err, "failed to generate %s", mapping.outputPath)
+		}
+	}
+
+	return nil
 }
