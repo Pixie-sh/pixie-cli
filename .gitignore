@@ -14,4 +14,7 @@
 /.idea/modules.xml
 /.idea/pixie-cli.iml
 /.idea/workspace.xml
-/cli_core
+/cli_pixie
+/bin/
+/coverage.out
+/coverage.html
