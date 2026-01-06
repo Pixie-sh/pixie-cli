@@ -1,0 +1,43 @@
+import { Component, Input, Output, EventEmitter, HostListener } from '@angular/core';
+import { CommonModule } from '@angular/common';
+
+export type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
+
+@Component({
+  selector: '{{ .Prefix }}-modal',
+  standalone: true,
+  imports: [CommonModule],
+  templateUrl: './modal.component.html',
+  styleUrls: ['./modal.component.scss']
+})
+export class ModalComponent {
+  @Input() isOpen = false;
+  @Input() title?: string;
+  @Input() size: ModalSize = 'md';
+  @Input() showClose = true;
+  @Input() closeOnBackdrop = true;
+  @Input() closeOnEscape = true;
+
+  @Output() closed = new EventEmitter<void>();
+
+  @HostListener('document:keydown.escape')
+  onEscapeKey(): void {
+    if (this.isOpen && this.closeOnEscape) {
+      this.close();
+    }
+  }
+
+  get modalClasses(): string[] {
+    return ['modal-content', `modal-${this.size}`];
+  }
+
+  close(): void {
+    this.closed.emit();
+  }
+
+  onBackdropClick(event: MouseEvent): void {
+    if (this.closeOnBackdrop && event.target === event.currentTarget) {
+      this.close();
+    }
+  }
+}

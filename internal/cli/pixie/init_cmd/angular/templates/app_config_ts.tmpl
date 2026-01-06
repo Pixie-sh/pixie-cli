@@ -1,0 +1,84 @@
+import { ApplicationConfig, provideZoneChangeDetection } from '@angular/core';
+import { provideRouter } from '@angular/router';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
+{{- if .Features.pwa }}
+import { provideServiceWorker } from '@angular/service-worker';
+{{- end }}
+{{- if .Features.state }}
+import { provideStore } from '@ngxs/store';
+import { withNgxsStoragePlugin } from '@ngxs/storage-plugin';
+{{- if .Features.auth }}
+import { AuthState } from './_core/stores/auth/auth.state';
+import { UserState } from './_core/stores/user/user.state';
+{{- end }}
+{{- end }}
+{{- if .Features.i18n }}
+import { provideTranslateService, TranslateLoader } from '@ngx-translate/core';
+import { TranslateHttpLoader } from '@ngx-translate/http-loader';
+import { HttpClient } from '@angular/common/http';
+{{- end }}
+
+import { routes } from './app.routes';
+{{- if .Features.auth }}
+import { authInterceptor } from './_core/interceptors/auth.interceptor';
+{{- end }}
+import { errorInterceptor } from './_core/interceptors/error.interceptor';
+
+{{- if .Features.i18n }}
+
+// Factory function for translate loader
+export function HttpLoaderFactory(http: HttpClient) {
+  return new TranslateHttpLoader(http, './assets/i18n/', '.json');
+}
+{{- end }}
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideZoneChangeDetection({ eventCoalescing: true }),
+    provideRouter(routes),
+    provideHttpClient(
+      withInterceptors([
+{{- if .Features.auth }}
+        authInterceptor,
+{{- end }}
+        errorInterceptor,
+      ])
+    ),
+    provideAnimationsAsync(),
+{{- if .Features.pwa }}
+    provideServiceWorker('ngsw-worker.js', {
+      enabled: true,
+      registrationStrategy: 'registerWhenStable:30000',
+    }),
+{{- end }}
+{{- if .Features.state }}
+    provideStore(
+      [
+{{- if .Features.auth }}
+        AuthState,
+        UserState,
+{{- end }}
+      ],
+      withNgxsStoragePlugin({
+        keys: [
+{{- if .Features.auth }}
+          'auth',
+          'user',
+{{- end }}
+        ],
+      })
+    ),
+{{- end }}
+{{- if .Features.i18n }}
+    provideTranslateService({
+      defaultLanguage: 'en',
+      loader: {
+        provide: TranslateLoader,
+        useFactory: HttpLoaderFactory,
+        deps: [HttpClient],
+      },
+    }),
+{{- end }}
+  ],
+};

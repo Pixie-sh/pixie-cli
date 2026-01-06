@@ -1,0 +1,61 @@
+import { Component, inject } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Router, RouterLink } from '@angular/router';
+import { AuthApiService } from '@api/auth-api.service';
+import { TokenService } from '@services/auth/token.service';
+{{- if .Features.state }}
+import { Store } from '@ngxs/store';
+import { SetAuth } from '@core/stores/auth/auth.actions';
+import { SetUser } from '@core/stores/user/user.actions';
+{{- end }}
+
+@Component({
+  selector: '{{ .Prefix }}-sign-in',
+  standalone: true,
+  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  templateUrl: './sign-in.component.html',
+  styleUrl: './sign-in.component.scss',
+})
+export class SignInComponent {
+  private readonly fb = inject(FormBuilder);
+  private readonly authApi = inject(AuthApiService);
+  private readonly tokenService = inject(TokenService);
+  private readonly router = inject(Router);
+{{- if .Features.state }}
+  private readonly store = inject(Store);
+{{- end }}
+
+  form: FormGroup = this.fb.group({
+    email: ['', [Validators.required, Validators.email]],
+    password: ['', [Validators.required, Validators.minLength(6)]],
+  });
+
+  isLoading = false;
+  error: string | null = null;
+
+  onSubmit(): void {
+    if (this.form.invalid) {
+      this.form.markAllAsTouched();
+      return;
+    }
+
+    this.isLoading = true;
+    this.error = null;
+
+    this.authApi.login(this.form.value).subscribe({
+      next: response => {
+        this.tokenService.setTokens(response.accessToken, response.refreshToken);
+{{- if .Features.state }}
+        this.store.dispatch(new SetAuth({ isAuthenticated: true }));
+        this.store.dispatch(new SetUser(response.user));
+{{- end }}
+        this.router.navigate(['/']);
+      },
+      error: err => {
+        this.isLoading = false;
+        this.error = err.error?.message || 'Login failed. Please try again.';
+      },
+    });
+  }
+}

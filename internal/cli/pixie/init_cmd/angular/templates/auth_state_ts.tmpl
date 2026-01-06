@@ -1,0 +1,184 @@
+import { Injectable } from '@angular/core';
+import { State, Action, StateContext, Selector } from '@ngxs/store';
+import { tap, catchError } from 'rxjs/operators';
+import { of } from 'rxjs';
+import { AuthApiService } from '@core/services/auth-api.service';
+import { TokenService } from '@core/services/token.service';
+import { User } from '@core/models/user.model';
+import {
+  Login,
+  LoginSuccess,
+  LoginFailure,
+  Logout,
+  Register,
+  RegisterSuccess,
+  RegisterFailure,
+  LoadCurrentUser,
+  ClearAuthError
+} from './auth.actions';
+
+export interface AuthStateModel {
+  user: User | null;
+  token: string | null;
+  isAuthenticated: boolean;
+  loading: boolean;
+  error: string | null;
+}
+
+const defaults: AuthStateModel = {
+  user: null,
+  token: null,
+  isAuthenticated: false,
+  loading: false,
+  error: null
+};
+
+@State<AuthStateModel>({
+  name: 'auth',
+  defaults
+})
+@Injectable()
+export class AuthState {
+  constructor(
+    private authApi: AuthApiService,
+    private tokenService: TokenService
+  ) {}
+
+  @Selector()
+  static user(state: AuthStateModel): User | null {
+    return state.user;
+  }
+
+  @Selector()
+  static isAuthenticated(state: AuthStateModel): boolean {
+    return state.isAuthenticated;
+  }
+
+  @Selector()
+  static loading(state: AuthStateModel): boolean {
+    return state.loading;
+  }
+
+  @Selector()
+  static error(state: AuthStateModel): string | null {
+    return state.error;
+  }
+
+  @Selector()
+  static token(state: AuthStateModel): string | null {
+    return state.token;
+  }
+
+  @Action(Login)
+  login(ctx: StateContext<AuthStateModel>, action: Login) {
+    ctx.patchState({ loading: true, error: null });
+    
+    return this.authApi.login(action.payload).pipe(
+      tap((response) => {
+        ctx.dispatch(new LoginSuccess({
+          user: response.data.user,
+          token: response.data.token
+        }));
+      }),
+      catchError((error) => {
+        ctx.dispatch(new LoginFailure(error.error?.message || 'Login failed'));
+        return of(error);
+      })
+    );
+  }
+
+  @Action(LoginSuccess)
+  loginSuccess(ctx: StateContext<AuthStateModel>, action: LoginSuccess) {
+    this.tokenService.setToken(action.payload.token);
+    ctx.patchState({
+      user: action.payload.user,
+      token: action.payload.token,
+      isAuthenticated: true,
+      loading: false,
+      error: null
+    });
+  }
+
+  @Action(LoginFailure)
+  loginFailure(ctx: StateContext<AuthStateModel>, action: LoginFailure) {
+    ctx.patchState({
+      loading: false,
+      error: action.error
+    });
+  }
+
+  @Action(Register)
+  register(ctx: StateContext<AuthStateModel>, action: Register) {
+    ctx.patchState({ loading: true, error: null });
+    
+    return this.authApi.register(action.payload).pipe(
+      tap((response) => {
+        ctx.dispatch(new RegisterSuccess({
+          user: response.data.user,
+          token: response.data.token
+        }));
+      }),
+      catchError((error) => {
+        ctx.dispatch(new RegisterFailure(error.error?.message || 'Registration failed'));
+        return of(error);
+      })
+    );
+  }
+
+  @Action(RegisterSuccess)
+  registerSuccess(ctx: StateContext<AuthStateModel>, action: RegisterSuccess) {
+    this.tokenService.setToken(action.payload.token);
+    ctx.patchState({
+      user: action.payload.user,
+      token: action.payload.token,
+      isAuthenticated: true,
+      loading: false,
+      error: null
+    });
+  }
+
+  @Action(RegisterFailure)
+  registerFailure(ctx: StateContext<AuthStateModel>, action: RegisterFailure) {
+    ctx.patchState({
+      loading: false,
+      error: action.error
+    });
+  }
+
+  @Action(Logout)
+  logout(ctx: StateContext<AuthStateModel>) {
+    this.tokenService.removeToken();
+    ctx.setState(defaults);
+  }
+
+  @Action(LoadCurrentUser)
+  loadCurrentUser(ctx: StateContext<AuthStateModel>) {
+    const token = this.tokenService.getToken();
+    if (!token) {
+      return;
+    }
+
+    ctx.patchState({ loading: true });
+
+    return this.authApi.getCurrentUser().pipe(
+      tap((response) => {
+        ctx.patchState({
+          user: response.data,
+          token: token,
+          isAuthenticated: true,
+          loading: false
+        });
+      }),
+      catchError(() => {
+        this.tokenService.removeToken();
+        ctx.setState(defaults);
+        return of(null);
+      })
+    );
+  }
+
+  @Action(ClearAuthError)
+  clearError(ctx: StateContext<AuthStateModel>) {
+    ctx.patchState({ error: null });
+  }
+}

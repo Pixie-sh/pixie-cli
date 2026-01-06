@@ -1,0 +1,45 @@
+import { Component, OnInit, OnDestroy } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { Subject, takeUntil } from 'rxjs';
+import { ToastService, Toast } from './toast.service';
+
+@Component({
+  selector: '{{ .Prefix }}-toast',
+  standalone: true,
+  imports: [CommonModule],
+  templateUrl: './toast.component.html',
+  styleUrls: ['./toast.component.scss']
+})
+export class ToastComponent implements OnInit, OnDestroy {
+  toasts: Toast[] = [];
+  private destroy$ = new Subject<void>();
+
+  constructor(private toastService: ToastService) {}
+
+  ngOnInit(): void {
+    this.toastService.getToasts()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(toasts => {
+        this.toasts = toasts;
+      });
+  }
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  dismiss(id: string): void {
+    this.toastService.dismiss(id);
+  }
+
+  getIcon(type: Toast['type']): string {
+    const icons = {
+      success: 'icon-check-circle',
+      error: 'icon-x-circle',
+      warning: 'icon-alert-triangle',
+      info: 'icon-info'
+    };
+    return icons[type];
+  }
+}

@@ -1,0 +1,44 @@
+import { HttpInterceptorFn, HttpErrorResponse } from '@angular/common/http';
+import { inject } from '@angular/core';
+import { Router } from '@angular/router';
+import { catchError, throwError } from 'rxjs';
+{{- if .Features.auth }}
+import { TokenService } from '@services/auth/token.service';
+{{- end }}
+
+export const errorInterceptor: HttpInterceptorFn = (req, next) => {
+  const router = inject(Router);
+{{- if .Features.auth }}
+  const tokenService = inject(TokenService);
+{{- end }}
+
+  return next(req).pipe(
+    catchError((error: HttpErrorResponse) => {
+      switch (error.status) {
+        case 401:
+          // Unauthorized - clear tokens and redirect to login
+{{- if .Features.auth }}
+          tokenService.clearTokens();
+          router.navigate(['/auth/sign-in']);
+{{- end }}
+          break;
+        case 403:
+          // Forbidden
+          console.error('Access forbidden:', error.message);
+          break;
+        case 404:
+          // Not found
+          console.error('Resource not found:', error.message);
+          break;
+        case 500:
+          // Server error
+          console.error('Server error:', error.message);
+          break;
+        default:
+          console.error('HTTP error:', error.message);
+      }
+
+      return throwError(() => error);
+    })
+  );
+};

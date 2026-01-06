@@ -1,0 +1,10 @@
+<div class="split-layout">
+  <div class="split-panel left-panel">
+    <ng-content select="[left-panel]"></ng-content>
+  </div>
+  
+  <div class="split-panel right-panel">
+    <ng-content select="[right-panel]"></ng-content>
+    <router-outlet></router-outlet>
+  </div>
+</div>

@@ -1,0 +1,57 @@
+import { User } from '@core/models/user.model';
+import { LoginRequest, RegisterRequest } from '@core/models/auth.model';
+
+export class Login {
+  static readonly type = '[Auth] Login';
+  constructor(public payload: LoginRequest) {}
+}
+
+export class LoginSuccess {
+  static readonly type = '[Auth] Login Success';
+  constructor(public payload: { user: User; token: string }) {}
+}
+
+export class LoginFailure {
+  static readonly type = '[Auth] Login Failure';
+  constructor(public error: string) {}
+}
+
+export class Register {
+  static readonly type = '[Auth] Register';
+  constructor(public payload: RegisterRequest) {}
+}
+
+export class RegisterSuccess {
+  static readonly type = '[Auth] Register Success';
+  constructor(public payload: { user: User; token: string }) {}
+}
+
+export class RegisterFailure {
+  static readonly type = '[Auth] Register Failure';
+  constructor(public error: string) {}
+}
+
+export class Logout {
+  static readonly type = '[Auth] Logout';
+}
+
+export class LoadCurrentUser {
+  static readonly type = '[Auth] Load Current User';
+}
+
+export class ClearAuthError {
+  static readonly type = '[Auth] Clear Error';
+}
+
+export class RefreshToken {
+  static readonly type = '[Auth] Refresh Token';
+}
+
+export class RefreshTokenSuccess {
+  static readonly type = '[Auth] Refresh Token Success';
+  constructor(public token: string) {}
+}
+
+export class RefreshTokenFailure {
+  static readonly type = '[Auth] Refresh Token Failure';
+}

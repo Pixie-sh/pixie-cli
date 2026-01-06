@@ -1,0 +1,43 @@
+import { Component, OnInit } from '@angular/core';
+import { CommonModule } from '@angular/common';
+{{- if .Features.state }}
+import { Store, Select } from '@ngxs/store';
+import { Observable } from 'rxjs';
+import { AuthState } from '@store/auth/auth.state';
+import { User } from '@core/models/user.model';
+{{- end }}
+
+@Component({
+  selector: '{{ .Prefix }}-dashboard',
+  standalone: true,
+  imports: [CommonModule],
+  templateUrl: './dashboard.component.html',
+  styleUrls: ['./dashboard.component.scss']
+})
+export class DashboardComponent implements OnInit {
+{{- if .Features.state }}
+  @Select(AuthState.user) user$!: Observable<User | null>;
+{{- end }}
+
+  stats = [
+    { label: 'Total Users', value: '1,234', change: '+12%', trend: 'up' },
+    { label: 'Active Sessions', value: '567', change: '+5%', trend: 'up' },
+    { label: 'Revenue', value: '$12,345', change: '-3%', trend: 'down' },
+    { label: 'Conversion', value: '2.4%', change: '+0.5%', trend: 'up' }
+  ];
+
+  recentActivity = [
+    { user: 'John Doe', action: 'Created a new project', time: '5 min ago' },
+    { user: 'Jane Smith', action: 'Updated profile settings', time: '10 min ago' },
+    { user: 'Mike Johnson', action: 'Completed a task', time: '15 min ago' },
+    { user: 'Sarah Wilson', action: 'Added a new team member', time: '30 min ago' }
+  ];
+
+{{- if .Features.state }}
+  constructor(private store: Store) {}
+{{- end }}
+
+  ngOnInit(): void {
+    // Initialize dashboard data
+  }
+}

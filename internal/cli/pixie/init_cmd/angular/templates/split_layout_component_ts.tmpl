@@ -1,0 +1,12 @@
+import { Component } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { RouterOutlet } from '@angular/router';
+
+@Component({
+  selector: '{{ .Prefix }}-split-layout',
+  standalone: true,
+  imports: [CommonModule, RouterOutlet],
+  templateUrl: './split-layout.component.html',
+  styleUrls: ['./split-layout.component.scss']
+})
+export class SplitLayoutComponent {}

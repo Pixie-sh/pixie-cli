@@ -1,0 +1,31 @@
+<div class="main-layout" [class.sidebar-collapsed]="sidebarCollapsed">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <span class="logo-icon">{{ "{{" }} '{{ .Prefix }}' | uppercase {{ "}}" }}</span>
+        <span class="logo-text" *ngIf="!sidebarCollapsed">{{ .ProjectName }}</span>
+      </div>
+      <button class="sidebar-toggle" (click)="toggleSidebar()">
+        <i [class]="sidebarCollapsed ? 'icon-menu' : 'icon-chevron-left'"></i>
+      </button>
+    </div>
+    
+    <nav class="sidebar-nav">
+      <ng-content select="[sidebar-nav]"></ng-content>
+    </nav>
+    
+    <div class="sidebar-footer">
+      <ng-content select="[sidebar-footer]"></ng-content>
+    </div>
+  </aside>
+  
+  <div class="main-content">
+    <header class="topbar">
+      <ng-content select="[topbar]"></ng-content>
+    </header>
+    
+    <main class="page-content">
+      <router-outlet></router-outlet>
+    </main>
+  </div>
+</div>

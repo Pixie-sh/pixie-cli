@@ -1,0 +1,139 @@
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-weight: 500;
+  border-radius: 0.5rem;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  &:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--primary-100);
+  }
+
+  // Sizes
+  &-sm {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.875rem;
+  }
+
+  &-md {
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+  }
+
+  &-lg {
+    padding: 0.75rem 1.5rem;
+    font-size: 1.125rem;
+  }
+
+  // Variants
+  &-primary {
+    background: var(--primary-600);
+    color: white;
+    border-color: var(--primary-600);
+
+    &:hover:not(:disabled) {
+      background: var(--primary-700);
+      border-color: var(--primary-700);
+    }
+  }
+
+  &-secondary {
+    background: var(--gray-100);
+    color: var(--gray-700);
+    border-color: var(--gray-200);
+
+    &:hover:not(:disabled) {
+      background: var(--gray-200);
+    }
+  }
+
+  &-outline {
+    background: transparent;
+    color: var(--primary-600);
+    border-color: var(--primary-600);
+
+    &:hover:not(:disabled) {
+      background: var(--primary-50);
+    }
+  }
+
+  &-ghost {
+    background: transparent;
+    color: var(--gray-600);
+    border-color: transparent;
+
+    &:hover:not(:disabled) {
+      background: var(--gray-100);
+    }
+  }
+
+  &-danger {
+    background: var(--error-600);
+    color: white;
+    border-color: var(--error-600);
+
+    &:hover:not(:disabled) {
+      background: var(--error-700);
+      border-color: var(--error-700);
+    }
+  }
+
+  // Modifiers
+  &-full-width {
+    width: 100%;
+  }
+
+  &-loading {
+    position: relative;
+    pointer-events: none;
+  }
+}
+
+.btn-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  .spinner {
+    width: 1rem;
+    height: 1rem;
+    animation: spin 1s linear infinite;
+
+    circle {
+      stroke-dasharray: 60;
+      stroke-dashoffset: 45;
+      stroke-linecap: round;
+    }
+  }
+}
+
+.btn-icon {
+  display: flex;
+  align-items: center;
+  font-size: 1.125em;
+}
+
+.btn-content {
+  display: flex;
+  align-items: center;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

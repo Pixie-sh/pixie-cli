@@ -1,0 +1,8 @@
+<div class="loader-container" [class.has-overlay]="overlay">
+  <div class="loader-content">
+    <div class="loader" [class]="sizeClasses" [style.border-top-color]="color">
+      <span class="sr-only">Loading...</span>
+    </div>
+    <span *ngIf="text" class="loader-text">{{ "{{" }} text {{ "}}" }}</span>
+  </div>
+</div>

@@ -1,0 +1,93 @@
+import { Component, Input, Output, EventEmitter, forwardRef } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { ControlValueAccessor, NG_VALUE_ACCESSOR, FormsModule } from '@angular/forms';
+
+export type InputType = 'text' | 'email' | 'password' | 'number' | 'tel' | 'url' | 'search';
+
+@Component({
+  selector: '{{ .Prefix }}-input',
+  standalone: true,
+  imports: [CommonModule, FormsModule],
+  templateUrl: './input.component.html',
+  styleUrls: ['./input.component.scss'],
+  providers: [
+    {
+      provide: NG_VALUE_ACCESSOR,
+      useExisting: forwardRef(() => InputComponent),
+      multi: true
+    }
+  ]
+})
+export class InputComponent implements ControlValueAccessor {
+  @Input() type: InputType = 'text';
+  @Input() label?: string;
+  @Input() placeholder = '';
+  @Input() hint?: string;
+  @Input() error?: string;
+  @Input() disabled = false;
+  @Input() readonly = false;
+  @Input() required = false;
+  @Input() icon?: string;
+  @Input() iconPosition: 'left' | 'right' = 'left';
+  @Input() autocomplete?: string;
+
+  @Output() valueChange = new EventEmitter<string>();
+  @Output() blurred = new EventEmitter<void>();
+  @Output() focused = new EventEmitter<void>();
+
+  value = '';
+  showPassword = false;
+  isFocused = false;
+
+  private onChange: (value: string) => void = () => {};
+  private onTouched: () => void = () => {};
+
+  get inputType(): string {
+    if (this.type === 'password') {
+      return this.showPassword ? 'text' : 'password';
+    }
+    return this.type;
+  }
+
+  get hasError(): boolean {
+    return !!this.error;
+  }
+
+  writeValue(value: string): void {
+    this.value = value || '';
+  }
+
+  registerOnChange(fn: (value: string) => void): void {
+    this.onChange = fn;
+  }
+
+  registerOnTouched(fn: () => void): void {
+    this.onTouched = fn;
+  }
+
+  setDisabledState(isDisabled: boolean): void {
+    this.disabled = isDisabled;
+  }
+
+  onInput(event: Event): void {
+    const target = event.target as HTMLInputElement;
+    this.value = target.value;
+    this.onChange(this.value);
+    this.valueChange.emit(this.value);
+  }
+
+  onBlur(): void {
+    this.isFocused = false;
+    this.onTouched();
+    this.blurred.emit();
+  }
+
+  onFocus(): void {
+    this.isFocused = true;
+    this.focused.emit();
+  }
+
+  togglePasswordVisibility(): void {
+    this.showPassword = !this.showPassword;
+  }
+}

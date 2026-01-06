@@ -1,0 +1,38 @@
+import { Routes } from '@angular/router';
+{{- if .Features.auth }}
+import { isAuthenticated, isNotAuthenticated } from './_core/services/auth/canActivate.function';
+{{- end }}
+
+export const routes: Routes = [
+{{- if .Features.auth }}
+  {
+    path: 'auth',
+    canActivate: [isNotAuthenticated],
+    loadChildren: () => import('./auth/auth.routes').then(m => m.AUTH_ROUTES),
+  },
+{{- end }}
+  {
+    path: '',
+    {{- if .Features.auth }}
+    canActivate: [isAuthenticated],
+    {{- end }}
+    loadComponent: () =>
+      import('./layouts/main-layout/main-layout.component').then(m => m.MainLayoutComponent),
+    children: [
+      {
+        path: '',
+        redirectTo: 'dashboard',
+        pathMatch: 'full',
+      },
+      {
+        path: 'dashboard',
+        loadComponent: () =>
+          import('./dashboard/dashboard.component').then(m => m.DashboardComponent),
+      },
+    ],
+  },
+  {
+    path: '**',
+    redirectTo: '',
+  },
+];
