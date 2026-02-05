@@ -18,3 +18,7 @@
 /bin/
 /coverage.out
 /coverage.html
+/CLAUDE.md
+/.claude
+/.claude/settings.local.json
+/.claude/commands
