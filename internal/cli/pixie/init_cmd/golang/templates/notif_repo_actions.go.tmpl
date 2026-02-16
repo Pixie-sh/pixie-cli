@@ -1,0 +1,88 @@
+package notifications_repositories
+
+import (
+	"github.com/pixie-sh/core-go/pkg/models/language_models"
+	"github.com/pixie-sh/core-go/pkg/models/notification_models"
+	"github.com/pixie-sh/database-helpers-go/database"
+
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer/notifications_entities"
+)
+
+// ActionsRepository handles database operations for notification actions
+type ActionsRepository struct {
+	database.Repository[ActionsRepository]
+}
+
+// NewActionsRepository creates a new ActionsRepository
+func NewActionsRepository(db *database.DB) ActionsRepository {
+	return ActionsRepository{database.NewRepository(
+		db,
+		NewActionsRepository,
+	)}
+}
+
+// GetActionsForEventTypeAndLanguage returns actions with templates for a given event type and language
+func (r ActionsRepository) GetActionsForEventTypeAndLanguage(
+	eventType string,
+	language language_models.LanguageEnum,
+) ([]notifications_entities.Action, error) {
+	var actions []notifications_entities.Action
+
+	err := r.DB.Preload("Template").
+		Where("event_type = ? AND language = ?", eventType, language.String()).
+		Where("action_status", notification_models.ActiveActionStatusEnum).
+		Find(&actions).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return actions, nil
+}
+
+// CountByEventTypeWithDeliveryMethods counts actions by event type grouped by delivery method
+func (r ActionsRepository) CountByEventTypeWithDeliveryMethods(eventType string) ([]struct {
+	EventType      string
+	DeliveryMethod notification_models.ActionDeliveryMethodEnum
+	Count          int64
+}, error) {
+	var results []struct {
+		EventType      string
+		DeliveryMethod notification_models.ActionDeliveryMethodEnum
+		Count          int64
+	}
+
+	err := r.DB.Model(&notifications_entities.Action{}).
+		Select("event_type, delivery_method, COUNT(*) as count").
+		Where("event_type = ?", eventType).
+		Group("event_type, delivery_method").
+		Find(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+// GetActionsByEventType retrieves all actions for a given event type
+func (r ActionsRepository) GetActionsByEventType(eventType string) ([]notifications_entities.Action, error) {
+	var actions []notifications_entities.Action
+	return actions, r.DB.Where("event_type = ?", eventType).Find(&actions).Error
+}
+
+// Insert creates a new action
+func (r ActionsRepository) Insert(entity notifications_entities.Action) (notifications_entities.Action, error) {
+	return entity, r.DB.Create(&entity).Error
+}
+
+// Updates updates an existing action
+func (r ActionsRepository) Updates(entity notifications_entities.Action) (notifications_entities.Action, error) {
+	return entity, r.DB.Updates(&entity).Error
+}
+
+// GetByID retrieves an action by ID
+func (r ActionsRepository) GetByID(id uint64) (notifications_entities.Action, error) {
+	var act notifications_entities.Action
+	return act, r.DB.First(&act, id).Error
+}

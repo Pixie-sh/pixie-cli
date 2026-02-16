@@ -1,0 +1,65 @@
+<div class="dashboard">
+  <div class="dashboard-header">
+    <h1>Dashboard</h1>
+{{- if .Features.state }}
+    <p *ngIf="user$ | async as user">Welcome back, {{ "{{" }} user.firstName {{ "}}" }}!</p>
+{{- else }}
+    <p>Welcome back!</p>
+{{- end }}
+  </div>
+
+  <div class="stats-grid">
+    <div *ngFor="let stat of stats" class="stat-card">
+      <div class="stat-label">{{ "{{" }} stat.label {{ "}}" }}</div>
+      <div class="stat-value">{{ "{{" }} stat.value {{ "}}" }}</div>
+      <div class="stat-change" [class.positive]="stat.trend === 'up'" [class.negative]="stat.trend === 'down'">
+        <i [class]="stat.trend === 'up' ? 'icon-trending-up' : 'icon-trending-down'"></i>
+        {{ "{{" }} stat.change {{ "}}" }}
+      </div>
+    </div>
+  </div>
+
+  <div class="dashboard-content">
+    <div class="card">
+      <div class="card-header">
+        <h2>Recent Activity</h2>
+      </div>
+      <div class="card-body">
+        <div class="activity-list">
+          <div *ngFor="let activity of recentActivity" class="activity-item">
+            <div class="activity-avatar">
+              {{ "{{" }} activity.user.charAt(0) {{ "}}" }}
+            </div>
+            <div class="activity-content">
+              <div class="activity-user">{{ "{{" }} activity.user {{ "}}" }}</div>
+              <div class="activity-action">{{ "{{" }} activity.action {{ "}}" }}</div>
+            </div>
+            <div class="activity-time">{{ "{{" }} activity.time {{ "}}" }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h2>Quick Actions</h2>
+      </div>
+      <div class="card-body">
+        <div class="quick-actions">
+          <button class="action-btn">
+            <i class="icon-plus"></i>
+            New Project
+          </button>
+          <button class="action-btn">
+            <i class="icon-users"></i>
+            Invite Team
+          </button>
+          <button class="action-btn">
+            <i class="icon-settings"></i>
+            Settings
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

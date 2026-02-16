@@ -1,0 +1,90 @@
+package auth_repositories
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/database-helpers-go/database"
+
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_entities"
+)
+
+type OTPRepository struct {
+	database.Repository[OTPRepository]
+}
+
+func NewOTPRepository(db *database.DB) OTPRepository {
+	return OTPRepository{database.NewRepository(db, NewOTPRepository)}
+}
+
+// FindPendingByEmailAndCode finds a pending UserOTP by email and code
+func (r OTPRepository) FindPendingByEmailAndCode(userID uid.UID, emailAddress, otpCode string) (auth_entities.UserOTP, error) {
+	var otp auth_entities.UserOTP
+	err := r.DB.Where("user_id = ? AND email_address = ? AND otp_code = ? AND status = ?",
+		userID, emailAddress, otpCode, auth_entities.OTPStatusPending).
+		First(&otp).Error
+	return otp, err
+}
+
+// FindPendingByEmail finds all pending OTPs by email address
+func (r OTPRepository) FindPendingByEmail(emailAddress string) ([]auth_entities.UserOTP, error) {
+	var otps []auth_entities.UserOTP
+	err := r.DB.Where("email_address = ? AND status = ?",
+		emailAddress, auth_entities.OTPStatusPending).
+		Find(&otps).Error
+	return otps, err
+}
+
+// ExpireOldOTPs expires all OTPs older than the given duration
+func (r OTPRepository) ExpireOldOTPs(olderThan time.Duration) error {
+	cutoffTime := time.Now().UTC().Add(-olderThan)
+	return r.DB.Model(&auth_entities.UserOTP{}).
+		Where("status = ? AND expires_at < ?", auth_entities.OTPStatusPending, cutoffTime).
+		Update("status", auth_entities.OTPStatusExpired).Error
+}
+
+// ExpireByUserID expires all pending OTPs for a specific user ID
+func (r OTPRepository) ExpireByUserID(userID uid.UID) error {
+	return r.DB.Model(&auth_entities.UserOTP{}).
+		Where("user_id = ? AND status = ?", userID, auth_entities.OTPStatusPending).
+		Update("status", auth_entities.OTPStatusExpired).Error
+}
+
+// UpdateStatus updates the status of an UserOTP
+func (r OTPRepository) UpdateStatus(otpID uid.UID, status auth_entities.OTPStatusEnum) error {
+	return r.DB.Model(&auth_entities.UserOTP{}).
+		Where("id = ?", otpID).
+		Update("status", status).Error
+}
+
+// Create creates a new UserOTP record
+func (r OTPRepository) Create(otp *auth_entities.UserOTP) error {
+	return r.DB.Create(otp).Error
+}
+
+// Save saves or updates an UserOTP record
+func (r OTPRepository) Save(otp *auth_entities.UserOTP) error {
+	return r.DB.Save(otp).Error
+}
+
+// FindByID finds an UserOTP by its ID
+func (r OTPRepository) FindByID(id uid.UID) (auth_entities.UserOTP, error) {
+	var otp auth_entities.UserOTP
+	err := r.DB.First(&otp, id).Error
+	return otp, err
+}
+
+// DeleteExpired deletes all expired OTPs (cleanup operation)
+func (r OTPRepository) DeleteExpired() error {
+	return r.DB.Where("status = ?", auth_entities.OTPStatusExpired).
+		Delete(&auth_entities.UserOTP{}).Error
+}
+
+// CountPendingByEmail counts pending OTPs for an email address
+func (r OTPRepository) CountPendingByEmail(emailAddress string) (int64, error) {
+	var count int64
+	err := r.DB.Model(&auth_entities.UserOTP{}).
+		Where("email_address = ? AND status = ?", emailAddress, auth_entities.OTPStatusPending).
+		Count(&count).Error
+	return count, err
+}

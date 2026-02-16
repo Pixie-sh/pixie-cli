@@ -1,0 +1,71 @@
+package session_manager
+
+import (
+	"context"
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/uid"
+
+	"{{ .ModuleName }}/pkg/models/session_manager_models"
+)
+
+// GenerateJWT generates a new JWT token
+func GenerateJWT(
+	ctx context.Context,
+	userID uid.UID,
+	email string,
+	ip string,
+	channel session_manager_models.SessionChannel,
+	entities []session_manager_models.JWTEntity,
+	customSessionManager ...*SessionManager,
+) (session_manager_models.JWT, error) {
+	jwt, err := GetManager(customSessionManager...).jwtService.GenerateToken(ctx, userID, email, ip, channel, entities)
+	return jwt, err
+}
+
+// Refresh refreshes the TTL for a JWT token
+func Refresh(ctx context.Context, tokenStr string, customSessionManager ...*SessionManager) error {
+	return GetManager(customSessionManager...).Refresh(ctx, tokenStr)
+}
+
+// Delete removes JWT and session from cache
+func Delete(
+	ctx context.Context,
+	jwtEncoded string,
+	jwt session_manager_models.JWT,
+	session session_manager_models.UntypedSession,
+	customSessionManager ...*SessionManager,
+) error {
+	return GetManager(customSessionManager...).Delete(ctx, jwtEncoded, jwt, session)
+}
+
+// DeleteByJWT removes JWT and session from cache by encoded JWT string
+func DeleteByJWT(
+	ctx context.Context,
+	jwtEncoded string,
+	jwt session_manager_models.JWT,
+	customSessionManager ...*SessionManager,
+) error {
+	var session session_manager_models.UntypedSession
+	session, err := GetManager(customSessionManager...).sessionService.FetchFromCacheByJWT(ctx, jwtEncoded)
+	if err != nil {
+		return err
+	}
+
+	return GetManager(customSessionManager...).Delete(ctx, jwtEncoded, jwt, session)
+}
+
+// ExpiresLT checks if the JWT expires within the given duration
+func ExpiresLT(ctx context.Context, jwtEncoded string, lt time.Duration, customSessionManager ...*SessionManager) (bool, error) {
+	return GetManager(customSessionManager...).jwtService.ExpiresLT(ctx, jwtEncoded, lt)
+}
+
+// TTL returns the configured token TTL duration
+func TTL(customSessionManager ...*SessionManager) time.Duration {
+	return GetManager(customSessionManager...).ttl()
+}
+
+// ParseJWT parses a JWT from an encoded string
+func ParseJWT(jwtEncoded string, customSessionManager ...*SessionManager) (session_manager_models.JWT, error) {
+	return GetManager(customSessionManager...).jwtService.JWTFromString(jwtEncoded)
+}

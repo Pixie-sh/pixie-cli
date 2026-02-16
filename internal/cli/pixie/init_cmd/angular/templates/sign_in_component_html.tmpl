@@ -1,0 +1,82 @@
+<div class="sign-in">
+  <div class="sign-in__header">
+    <h1>Welcome back</h1>
+    <p>Sign in to your account to continue</p>
+  </div>
+
+  <form [formGroup]="form" (ngSubmit)="onSubmit()" class="sign-in__form">
+    @if (error) {
+      <div class="alert alert-danger" role="alert">
+        {{ "{{" }} error {{ "}}" }}
+      </div>
+    }
+
+    <div class="mb-3">
+      <label for="email" class="form-label">Email</label>
+      <input
+        type="email"
+        class="form-control"
+        id="email"
+        formControlName="email"
+        placeholder="Enter your email"
+        [class.is-invalid]="form.get('email')?.invalid && form.get('email')?.touched"
+      />
+      @if (form.get('email')?.invalid && form.get('email')?.touched) {
+        <div class="invalid-feedback">
+          @if (form.get('email')?.errors?.['required']) {
+            Email is required
+          } @else if (form.get('email')?.errors?.['email']) {
+            Please enter a valid email
+          }
+        </div>
+      }
+    </div>
+
+    <div class="mb-3">
+      <label for="password" class="form-label">Password</label>
+      <input
+        type="password"
+        class="form-control"
+        id="password"
+        formControlName="password"
+        placeholder="Enter your password"
+        [class.is-invalid]="form.get('password')?.invalid && form.get('password')?.touched"
+      />
+      @if (form.get('password')?.invalid && form.get('password')?.touched) {
+        <div class="invalid-feedback">
+          @if (form.get('password')?.errors?.['required']) {
+            Password is required
+          } @else if (form.get('password')?.errors?.['minlength']) {
+            Password must be at least 6 characters
+          }
+        </div>
+      }
+    </div>
+
+    <div class="mb-3 text-end">
+      <a routerLink="/auth/reset-password" class="text-decoration-none">
+        Forgot password?
+      </a>
+    </div>
+
+    <button
+      type="submit"
+      class="btn btn-primary w-100"
+      [disabled]="isLoading"
+    >
+      @if (isLoading) {
+        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+        Signing in...
+      } @else {
+        Sign in
+      }
+    </button>
+  </form>
+
+  <div class="sign-in__footer">
+    <p>
+      Don't have an account?
+      <a routerLink="/auth/sign-up">Sign up</a>
+    </p>
+  </div>
+</div>

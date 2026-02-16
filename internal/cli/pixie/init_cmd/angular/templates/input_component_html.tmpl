@@ -1,0 +1,42 @@
+<div class="input-wrapper" [class.has-error]="hasError" [class.is-focused]="isFocused" [class.is-disabled]="disabled">
+  <label *ngIf="label" class="input-label">
+    {{ "{{" }} label {{ "}}" }}
+    <span *ngIf="required" class="required-mark">*</span>
+  </label>
+
+  <div class="input-container" [class.has-icon-left]="icon && iconPosition === 'left'" [class.has-icon-right]="icon && iconPosition === 'right' || type === 'password'">
+    <span *ngIf="icon && iconPosition === 'left'" class="input-icon left">
+      <i [class]="icon"></i>
+    </span>
+
+    <input
+      [type]="inputType"
+      [value]="value"
+      [placeholder]="placeholder"
+      [disabled]="disabled"
+      [readonly]="readonly"
+      [autocomplete]="autocomplete"
+      (input)="onInput($event)"
+      (blur)="onBlur()"
+      (focus)="onFocus()"
+      class="input-field"
+    />
+
+    <span *ngIf="icon && iconPosition === 'right' && type !== 'password'" class="input-icon right">
+      <i [class]="icon"></i>
+    </span>
+
+    <button
+      *ngIf="type === 'password'"
+      type="button"
+      class="password-toggle"
+      (click)="togglePasswordVisibility()"
+      tabindex="-1"
+    >
+      <i [class]="showPassword ? 'icon-eye-off' : 'icon-eye'"></i>
+    </button>
+  </div>
+
+  <span *ngIf="error" class="input-error">{{ "{{" }} error {{ "}}" }}</span>
+  <span *ngIf="hint && !error" class="input-hint">{{ "{{" }} hint {{ "}}" }}</span>
+</div>

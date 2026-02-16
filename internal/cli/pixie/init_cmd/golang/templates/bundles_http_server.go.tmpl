@@ -1,0 +1,141 @@
+package bundles
+
+import (
+	"context"
+
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+	httpmiddlewares "github.com/pixie-sh/core-go/pkg/comm/http_middlewares"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/metrics"
+	"github.com/pixie-sh/core-go/pkg/microservice"
+	"github.com/pixie-sh/core-go/pkg/types"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/logger-go/logger"
+)
+
+// HttpServerBundleConfigurations holds HTTP server configuration
+type HttpServerBundleConfigurations struct {
+	CorsConfiguration   httpmiddlewares.CorsConfiguration `json:"cors_configuration"`
+	ServerConfiguration http.ServerConfiguration
+}
+
+// LookupNode implements di.ConfigurationLookup interface
+func (h HttpServerBundleConfigurations) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(h, lookupPath)
+}
+
+// HttpServerBundle holds HTTP and metrics servers
+type HttpServerBundle struct {
+	Server        http.Server
+	MetricsServer http.Server
+}
+
+// NewHttpServerBundle creates a new HTTP server with middlewares
+func NewHttpServerBundle(ctx context.Context, cfg HttpServerBundleConfigurations) (http.Server, error) {
+	var httpMiddlewares []http.ServerHandler
+	var serverConfiguration = cfg.ServerConfiguration
+
+	if types.IsEmpty(serverConfiguration) {
+		serverConfiguration = http.DefaultServerConfiguration
+	}
+
+	if !types.IsEmpty(cfg.CorsConfiguration) {
+		ccfg := cors.ConfigDefault
+		ccfg.AllowOrigins = cfg.CorsConfiguration.AllowOrigins
+		ccfg.AllowHeaders = cfg.CorsConfiguration.AllowHeaders
+		ccfg.AllowCredentials = cfg.CorsConfiguration.AllowCredentials
+		ccfg.AllowMethods = cfg.CorsConfiguration.AllowMethods
+		ccfg.ExposeHeaders = cfg.CorsConfiguration.ExposeHeaders
+		ccfg.MaxAge = cfg.CorsConfiguration.MaxAge
+
+		pixiecontext.GetCtxLogger(ctx).With("cors_configuration", ccfg).Debug("adding cors middleware")
+		httpMiddlewares = append(httpMiddlewares, cors.New(ccfg))
+	}
+
+	httpMiddlewares = append(httpMiddlewares, httpmiddlewares.Tracing()...)
+	httpMiddlewares = append(
+		httpMiddlewares,
+		httpmiddlewares.Metrics(metrics.GlobalRegistry),
+		httpmiddlewares.RequestUtils(logger.Logger),
+		httpmiddlewares.Logger("/health", "/ws-health", "/metrics"),
+	)
+
+	server := http.NewServer(serverConfiguration, httpMiddlewares...)
+	return server, microservice.SetupHealthController(ctx, server)
+}
+
+// NewHttpServerAndMetricsBundle creates both HTTP and metrics servers
+func NewHttpServerAndMetricsBundle(ctx context.Context, cfg HttpServerBundleConfigurations) (http.Server, http.Server, error) {
+	httpServer, err := NewHttpServerBundle(ctx, cfg)
+	if err != nil {
+		return httpServer, httpServer, err
+	}
+
+	metricsServer, err := NewMetricsServerBundle(ctx, cfg)
+	return httpServer, metricsServer, err
+}
+
+// NewMetricsServerBundle creates a metrics server
+func NewMetricsServerBundle(ctx context.Context, cfg HttpServerBundleConfigurations) (http.Server, error) {
+	serverConfiguration := cfg.ServerConfiguration
+	if types.IsEmpty(serverConfiguration) {
+		serverConfiguration = http.DefaultServerConfiguration
+	}
+
+	server := http.NewServer(
+		http.DefaultServerConfiguration,
+	)
+
+	err := microservice.SetupMetricsController(ctx, server)
+	if err != nil {
+		return server, err
+	}
+
+	return server, microservice.SetupHealthController(ctx, server)
+}
+
+// RegistryHTTPServerBundleConfiguration creates configuration from DI context
+func RegistryHTTPServerBundleConfiguration(c di.Context, opts *di.RegistryOpts) (*HttpServerBundleConfigurations, error) {
+	return di.ConfigurationLookup[*HttpServerBundleConfigurations](c, opts)
+}
+
+// RegistryHTTPServerBundle creates HttpServerBundle from DI context
+func RegistryHTTPServerBundle(ctx di.Context, opts *di.RegistryOpts) (*HttpServerBundle, error) {
+	cfg, err := di.CreateConfiguration[*HttpServerBundleConfigurations](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	server, metricsServer, err := NewHttpServerAndMetricsBundle(ctx, *cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &HttpServerBundle{
+		Server:        server,
+		MetricsServer: metricsServer,
+	}, nil
+}
+
+// RegistryHTTPServer creates a single HTTP server from DI context
+func RegistryHTTPServer(context di.Context, opts *di.RegistryOpts) (*http.Server, error) {
+	httpServerConfiguration, err := di.CreateConfiguration[*http.ServerConfiguration](context, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	httpServerHandlers, err := di.Create[[]http.ServerHandler](context, di.WithOpts(opts))
+	if err != nil {
+		logger.With("error", err).Warn("unable to create http server handlers, proceeding with empty list")
+		httpServerHandlers = []http.ServerHandler{}
+	}
+
+	server := http.NewServer(*httpServerConfiguration, httpServerHandlers...)
+	return &server, nil
+}
+
+// RegistryHTTPServerConfiguration returns default HTTP server configuration
+func RegistryHTTPServerConfiguration(_ di.Context, _ *di.RegistryOpts) (*http.ServerConfiguration, error) {
+	return &http.DefaultServerConfiguration, nil
+}

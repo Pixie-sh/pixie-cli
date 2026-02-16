@@ -1,0 +1,95 @@
+package {{.DomainName}}_services
+
+import (
+	"context"
+
+    "github.com/pixie-sh/core-go/pkg/services"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/di-go"
+
+	internaldi "{{.ModuleName}}/infra/di"
+	data "{{.ModuleName}}/internal/domains/{{.DomainName}}/{{.DomainName}}_data_layer"
+	"{{.ModuleName}}/internal/domains/{{.DomainName}}/{{.DomainName}}_data_layer/{{.DomainName}}_entities"
+)
+
+type {{.ServiceNameCamel}}ServiceConfiguration struct {
+	{{.DomainNameCamel}}DataLayerConfiguration data.{{.DomainNameCamel}}DataLayerConfiguration `json:"{{.DomainName}}_data_layer"`
+}
+
+func (c *{{.ServiceNameCamel}}ServiceConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(c, lookupPath)
+}
+
+type {{.ServiceNameCamel}}Service struct {
+	services.Service[{{.ServiceNameCamel}}Service]
+
+	config    {{.DomainNameCamel}}ServiceConfiguration
+	dataLayer *data.{{.DomainNameCamel}}DataLayer
+}
+
+func Registry{{.ServiceNameCamel}}ServiceConfiguration(ctx di.Context, opts *di.RegistryOpts) (*{{.DomainNameCamel}}ServiceConfiguration, error) {
+	return di.ConfigurationLookup[*{{.DomainNameCamel}}ServiceConfiguration](ctx, opts)
+}
+
+func Registry{{.ServiceNameCamel}}Service(ctx di.Context, opts *di.RegistryOpts) (*{{.ServiceNameCamel}}Service, error) {
+	cfg, err := di.CreateConfiguration[*{{.DomainNameCamel}}ServiceConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	{{.DomainName}}DataLayer, err := di.Create[*data.{{.DomainNameCamel}}DataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryToken{{.DomainNameCamel}}DataLayer))
+	if err != nil {
+		return nil, err
+	}
+
+	return New{{.ServiceNameCamel}}Service(ctx, *cfg, {{.DomainName}}DataLayer), nil
+}
+
+func New{{.ServiceNameCamel}}Service(ctx context.Context, config {{.DomainNameCamel}}ServiceConfiguration, dataLayer *data.{{.DomainNameCamel}}DataLayer) *{{.ServiceNameCamel}}Service {
+	serv := &{{.ServiceNameCamel}}Service{
+        services.Service[{{.ServiceNameCamel}}Service]{}, //use compiler trick to avoid missing ref assignments
+        config,
+        dataLayer,
+	}
+
+	serv.Service = services.NewService(serv, New{{.ServiceNameCamel}}ServiceFrom)
+    return serv
+}
+
+func New{{.ServiceNameCamel}}ServiceFrom(service services.Service[{{.ServiceNameCamel}}Service]) (*{{.ServiceNameCamel}}Service, *services.Service[{{.ServiceNameCamel}}Service]) {
+	servFrom := &{{.ServiceNameCamel}}Service{
+		services.Service[{{.ServiceNameCamel}}Service]{}, //use compiler trick to avoid missing ref copies
+		service.Instance.config,
+		service.Instance.dataLayer,
+	}
+
+	servFrom.Service = services.NewService(servFrom, nil)
+	return servFrom, &servFrom.Service
+}
+
+
+// Create{{.DomainNameCamel}} creates a new {{.DomainName}} entity
+func (s *{{.ServiceNameCamel}}Service) Create{{.DomainNameCamel}}(ctx context.Context, name, description string) ({{.DomainName}}_entities.{{.DomainNameCamel}}, error) {
+	// {{.DomainName}} := {{.DomainName}}_entities.{{.DomainNameCamel}}{
+	// 	ID:          uid.New(),
+	// 	Name:        name,
+	// 	Description: description,
+	// }
+
+	// if err := s.db.Create(&{{.DomainName}}).Error; err != nil {
+	// 	return {{.DomainName}}_entities.{{.DomainNameCamel}}{}, err
+	// }
+
+	return {{.DomainName}}_entities.{{.DomainNameCamel}}{}, nil
+}
+
+// GetByID retrieves a {{.DomainName}} by ID
+func (s *{{.ServiceNameCamel}}Service) GetByID(ctx context.Context, id uid.UID) ({{.DomainName}}_entities.{{.DomainNameCamel}}, error) {
+	// var {{.DomainName}} {{.DomainName}}_entities.{{.DomainNameCamel}}
+	
+	// if err := s.db.Where("id = ?", id).First(&{{.DomainName}}).Error; err != nil {
+	// 	return {{.DomainName}}_entities.{{.DomainNameCamel}}{}, err
+	// }
+
+	return {{.DomainName}}_entities.{{.DomainNameCamel}}{}, nil
+}

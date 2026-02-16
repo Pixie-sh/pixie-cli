@@ -1,0 +1,14 @@
+package main
+
+import (
+	"context"
+
+	"github.com/pixie-sh/errors-go"
+
+	"{{.ModuleName}}/internal/cli/{{.ProjectNameSnake}}"
+)
+
+func main() {
+	ctx := context.Background()
+	errors.Must({{.ProjectNameSnake}}.Execute(ctx))
+}

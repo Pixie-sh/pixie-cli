@@ -1,0 +1,76 @@
+package bundles
+
+import (
+	"context"
+
+	"github.com/pixie-sh/core-go/infra/cache"
+	"github.com/pixie-sh/di-go"
+
+	"{{.ModuleName}}/infra/session_manager"
+)
+
+// TokenServicesBundle holds token-related services
+type TokenServicesBundle struct {
+	SetCache        cache.SetCache
+	SessionManager  *session_manager.SessionManager
+	JWTTokenService *session_manager.JWTTokenService
+	SessionService  *session_manager.SessionService
+}
+
+// TokenServicesBundleConfiguration holds token service configuration
+type TokenServicesBundleConfiguration struct {
+	TokenCacheConfig   cache.RedisCacheConfiguration               `json:"token_cache"`
+	TokenServiceConfig session_manager.SessionManagerConfiguration `json:"token_service"`
+}
+
+// LookupNode implements di.ConfigurationLookup interface
+func (t TokenServicesBundleConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(t, lookupPath)
+}
+
+// NewSessionManager creates a new session manager with JWT and session services
+func NewSessionManager(ctx context.Context, config TokenServicesBundleConfiguration) (
+	cache.SetCache,
+	*session_manager.SessionManager,
+	*session_manager.JWTTokenService,
+	*session_manager.SessionService,
+	error,
+) {
+	tokenCache, err := cache.NewRedisCache(ctx, config.TokenCacheConfig)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	sessionManager, err := session_manager.NewSessionManager(ctx, config.TokenServiceConfig, tokenCache)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	session_manager.SetManager(ctx, &sessionManager)
+	return tokenCache, &sessionManager, sessionManager.GetJWTService(), sessionManager.GetSessionService(), nil
+}
+
+// RegistryTokenServicesBundleConfiguration creates configuration from DI context
+func RegistryTokenServicesBundleConfiguration(c di.Context, opts *di.RegistryOpts) (*TokenServicesBundleConfiguration, error) {
+	return di.ConfigurationLookup[*TokenServicesBundleConfiguration](c, opts)
+}
+
+// RegistryTokenServicesBundle creates TokenServicesBundle from DI context
+func RegistryTokenServicesBundle(c di.Context, opts *di.RegistryOpts) (*TokenServicesBundle, error) {
+	cfg, err := di.CreateConfiguration[*TokenServicesBundleConfiguration](c, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	setCache, manager, jwt, session, err := NewSessionManager(c, *cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &TokenServicesBundle{
+		SetCache:        setCache,
+		SessionManager:  manager,
+		JWTTokenService: jwt,
+		SessionService:  session,
+	}, nil
+}

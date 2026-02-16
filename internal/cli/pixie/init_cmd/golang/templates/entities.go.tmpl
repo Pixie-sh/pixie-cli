@@ -1,0 +1,23 @@
+package {{.DomainName}}_entities
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+type {{.EntityNameCamel}} struct {
+	ID          uid.UID   `gorm:"primaryKey;type:char(26)" json:"id"`
+	Name        string    `gorm:"not null;size:255" json:"name"`
+	Description string    `gorm:"type:text" json:"description"`
+	{{- if .Features.auth}}
+	UserID      uid.UID   `gorm:"type:char(26);index" json:"user_id"`
+	{{- end}}
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// TableName returns the table name for the {{.EntityNameCamel}} entity
+func ({{.EntityNameCamel}}) TableName() string {
+	return "{{.DomainName}}_{{.EntityName}}"
+}

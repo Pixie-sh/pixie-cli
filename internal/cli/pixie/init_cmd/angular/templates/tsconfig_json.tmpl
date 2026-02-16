@@ -1,0 +1,61 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "baseUrl": "./",
+    "outDir": "./dist/out-tsc",
+    "forceConsistentCasingInFileNames": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": false,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "sourceMap": true,
+    "declaration": false,
+    "experimentalDecorators": true,
+    "moduleResolution": "node",
+    "importHelpers": true,
+    "target": "ES2022",
+    "module": "es2020",
+    "lib": [
+      "es2022",
+      "dom"
+    ],
+    "paths": {
+      "@shared/*": [
+        "src/app/shared/*"
+      ],
+      "@core/*": [
+        "src/app/_core/*"
+      ],
+      "@models/*": [
+        "src/app/_core/models/*"
+      ],
+      "@services/*": [
+        "src/app/_core/services/*"
+      ],
+      "@api/*": [
+        "src/app/_core/api/*"
+      ],
+      "@enums/*": [
+        "src/app/_core/enums/*"
+      ],
+      "@helpers/*": [
+        "src/app/_core/helpers/*"
+      ],
+      "@layouts/*": [
+        "src/app/layouts/*"
+      ],
+      "@env/*": [
+        "src/environments/*"
+      ]
+    },
+    "useDefineForClassFields": false
+  },
+  "angularCompilerOptions": {
+    "enableI18nLegacyMessageIdFormat": false,
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true,
+    "strictTemplates": true
+  }
+}

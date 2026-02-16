@@ -1,0 +1,940 @@
+package notifications_business_layer
+
+import (
+	"context"
+	"fmt"
+	"runtime/debug"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/pixie-sh/core-go/infra/message_factory"
+	messagewrapper "github.com/pixie-sh/core-go/infra/message_wrapper"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/errors/db_errors"
+	"github.com/pixie-sh/core-go/pkg/layer"
+	"github.com/pixie-sh/core-go/pkg/models/language_models"
+	"github.com/pixie-sh/core-go/pkg/models/notification_models"
+	"github.com/pixie-sh/core-go/pkg/models/serializer"
+	"github.com/pixie-sh/core-go/pkg/templates"
+	"github.com/pixie-sh/core-go/pkg/types"
+	"github.com/pixie-sh/core-go/pkg/types/maps"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/core-go/pkg/utils"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"github.com/pixie-sh/database-helpers-go/pipeline"
+	"github.com/pixie-sh/database-helpers-go/pipeline/operators"
+	pipelineModels "github.com/pixie-sh/database-helpers-go/pipeline/operators/models"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/errors-go"
+
+	internaldi "{{ .ModuleName }}/infra/di"
+	"{{ .ModuleName }}/infra/event"
+	"{{ .ModuleName }}/internal/adapters/notification_adapters"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer"
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer"
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer/notifications_entities"
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_services"
+)
+
+// NotificationsBusinessLayerConfiguration contains the configuration for the notifications business layer
+type NotificationsBusinessLayerConfiguration struct {
+	NotificationsDataLayer             notifications_data_layer.NotificationsDataLayerConfiguration `json:"notifications_data_layer"`
+	UserDataLayer                      authentication_data_layer.AuthenticationDataLayerConfiguration `json:"user_data_layer"`
+	FirebaseServiceConfiguration       notifications_services.FirebaseServiceConfiguration          `json:"notifications_push_service"`
+	MessagebirdSmsServiceConfiguration notifications_services.MessagebirdSmsServiceConfiguration    `json:"notifications_sms_service"`
+	MailgunServiceConfiguration        notifications_services.MailgunServiceConfiguration           `json:"notifications_email_service"`
+	PublicWebsiteURL                   string                                                       `json:"public_website_url"`
+	BackofficePublicURL                string                                                       `json:"backoffice_public_url"`
+}
+
+func (n *NotificationsBusinessLayerConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(n, lookupPath)
+}
+
+// NotificationsBusinessLayer handles all notification-related business logic
+type NotificationsBusinessLayer struct {
+	config                  *NotificationsBusinessLayerConfiguration
+	dataLayer               *notifications_data_layer.NotificationsDataLayer
+	userDataLayer           *authentication_data_layer.AuthenticationDataLayer
+	adapters                *notification_adapters.Adapters
+	helpersService          *notifications_services.HelpersService
+	pushNotificationService notifications_services.PushNotificationService
+	smsService              notifications_services.SMSService
+	emailService            notifications_services.EmailService
+	globalTemplateHelpers   []templates.GlobalRegisterHelper
+}
+
+// RegistryNotificationsBusinessLayerConfiguration registers the notifications business layer configuration
+func RegistryNotificationsBusinessLayerConfiguration(ctx di.Context, opts *di.RegistryOpts) (*NotificationsBusinessLayerConfiguration, error) {
+	return di.ConfigurationLookup[*NotificationsBusinessLayerConfiguration](ctx, opts)
+}
+
+// RegistryNotificationsBusinessLayer registers the notifications business layer
+func RegistryNotificationsBusinessLayer(ctx di.Context, opts *di.RegistryOpts) (*NotificationsBusinessLayer, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	cfg, err := di.CreateConfiguration[*NotificationsBusinessLayerConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	notificationsDataLayer, err := di.Create[*notifications_data_layer.NotificationsDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenNotificationsDataLayer))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenNotificationsDataLayer, internaldi.RegistryTokenNotificationsBusinessLayer)
+		return nil, err
+	}
+
+	userDataLayer, err := di.Create[*authentication_data_layer.AuthenticationDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenAuthenticationDataLayer))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenAuthenticationDataLayer, internaldi.RegistryTokenNotificationsBusinessLayer)
+		return nil, err
+	}
+
+	adapters, err := di.Create[*notification_adapters.Adapters](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenNotificationAdapters))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenNotificationAdapters, internaldi.RegistryTokenNotificationsBusinessLayer)
+		return nil, err
+	}
+
+	helpersService, err := di.Create[*notifications_services.HelpersService](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenNotificationsHelpersService))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenNotificationsHelpersService, internaldi.RegistryTokenNotificationsBusinessLayer)
+		return nil, err
+	}
+
+	pushNotificationService, err := di.Create[notifications_services.PushNotificationService](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenNotificationsPushService))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenNotificationsPushService, internaldi.RegistryTokenNotificationsBusinessLayer)
+		pushNotificationService = nil
+	}
+
+	smsService, err := di.Create[notifications_services.SMSService](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenNotificationsSMSService))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenNotificationsSMSService, internaldi.RegistryTokenNotificationsBusinessLayer)
+		smsService = nil
+	}
+
+	emailService, err := di.Create[notifications_services.EmailService](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenNotificationsEmailService))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenNotificationsEmailService, internaldi.RegistryTokenNotificationsBusinessLayer)
+		emailService = nil
+	}
+
+	return NewNotificationsBusinessLayer(
+		ctx,
+		cfg,
+		notificationsDataLayer,
+		userDataLayer,
+		adapters,
+		helpersService,
+		pushNotificationService,
+		smsService,
+		emailService,
+	)
+}
+
+// NewNotificationsBusinessLayer creates a new NotificationsBusinessLayer with all dependencies
+func NewNotificationsBusinessLayer(
+	ctx context.Context,
+	config *NotificationsBusinessLayerConfiguration,
+	dataLayer *notifications_data_layer.NotificationsDataLayer,
+	userDataLayer *authentication_data_layer.AuthenticationDataLayer,
+	adapters *notification_adapters.Adapters,
+	helpersService *notifications_services.HelpersService,
+	pushNotificationService notifications_services.PushNotificationService,
+	smsService notifications_services.SMSService,
+	emailService notifications_services.EmailService,
+) (*NotificationsBusinessLayer, error) {
+	l := &NotificationsBusinessLayer{
+		config:                  config,
+		dataLayer:               dataLayer,
+		userDataLayer:           userDataLayer,
+		adapters:                adapters,
+		helpersService:          helpersService,
+		pushNotificationService: pushNotificationService,
+		smsService:              smsService,
+		emailService:            emailService,
+	}
+
+	return l, l.InitLayer(ctx)
+}
+
+// InitLayer initializes the notification business layer
+func (l *NotificationsBusinessLayer) InitLayer(_ context.Context) error {
+	if types.Nil(l.pushNotificationService) && types.Nil(l.smsService) && types.Nil(l.emailService) {
+		return errors.New("unable to initialize NotificationBusinessLayer, all services are not initialized").
+			WithErrorCode(errors.ErrorCreatingDependencyErrorCode)
+	}
+
+	l.globalTemplateHelpers = []templates.GlobalRegisterHelper{
+		{FunctionName: "GetCurrentYear", UsageExample: "{{"{{"}}{{"GetCurrentYear"}}{{"}}"}} ", AnonymousFunction: func() string { return strconv.Itoa(time.Now().Year()) }},
+		{FunctionName: "GetUserPushToken", UsageExample: "<p> get user push notification token from user id {{"{{"}}{{"GetUserPushToken user_id"}}{{"}}"}} <p>", AnonymousFunction: l.helpersService.GetFcmTokenByUserIdPanic},
+		{FunctionName: "GetUserPushTokenFromStringID", UsageExample: "<p> get user push notification token from user id {{"{{"}}{{"GetUserPushTokenFromStringID user_id"}}{{"}}"}} <p>", AnonymousFunction: l.helpersService.GetFcmTokenByStringUserIdPanic},
+		{FunctionName: "GetEmailByUserID", UsageExample: "<p> sms to phone number: {{"{{"}}{{"GetEmailByUserID user_id"}}{{"}}"}} <p>", AnonymousFunction: l.helpersService.GetEmailByUserIDPanic},
+		{FunctionName: "GetPublicWebsiteURL", UsageExample: "<p> check our plan at {{"{{"}}{{"GetPublicWebsiteURL"}}{{"}}"}} ", AnonymousFunction: func() string { return l.config.PublicWebsiteURL }},
+		{FunctionName: "GetBackofficePublicURL", UsageExample: "<p> admin go here {{"{{"}}{{"GetBackofficePublicURL"}}{{"}}"}} ", AnonymousFunction: func() string { return l.config.BackofficePublicURL }},
+		{FunctionName: "PanicFor", UsageExample: `<p> will panic if the value user_id matches a value in the array {{"{{"}}{{"PanicFor \"user_id\" [\"123\", \"456\"]"}}{{"}}"}}`, AnonymousFunction: l.helpersService.PanicFor},
+	}
+	return nil
+}
+
+// Health returns the health status of the notifications layer
+func (l *NotificationsBusinessLayer) Health(_ context.Context) layer.HealthResponse {
+	return layer.HealthResponse{
+		Err: nil,
+	}
+}
+
+// Defer cleans up the data layer
+func (l *NotificationsBusinessLayer) Defer() {
+	l.dataLayer.Defer()
+}
+
+// HandleRequest processes an incoming notification request
+func (l *NotificationsBusinessLayer) HandleRequest(ctx context.Context, request *messagewrapper.UntypedMessage) error {
+	requestLanguage := language_models.ENLanguageEnum
+
+	log := pixiecontext.GetCtxLogger(ctx).
+		With("request.PayloadType", request.PayloadType).
+		With("request.ID", request.ID).
+		With("request.Language", requestLanguage)
+	log.Log("payload at sqs consumer with %s-%s", request.PayloadType, request.ID)
+
+	actionsWithTemplates, err := l.dataLayer.ActionsRepository.GetActionsForEventTypeAndLanguage(
+		request.PayloadType,
+		requestLanguage,
+	)
+	if err != nil {
+		return db_errors.Handle(err)
+	}
+
+	typedMapRequest, err := message_factory.Singleton.TranslateMap(request.PayloadType, request.Payload)
+	if err != nil {
+		return err
+	}
+
+	for _, action := range actionsWithTemplates {
+		err = l.executeActionCondition(ctx, typedMapRequest, action.ConditionTemplate)
+		if err != nil {
+			e, has := errors.Has(err, errors.TemplateDoNotTriggerErrorCode)
+			if has {
+				pixiecontext.GetCtxLogger(ctx).With("error", e).Log("template panic error, skipping notification")
+				continue
+			}
+
+			return err
+		}
+		switch action.DeliveryMethod {
+		case notification_models.EmailActionDeliveryMethod:
+			subLog := log.
+				With("action.DeliveryMethod", action.DeliveryMethod).
+				With("action.Name", action.Name)
+			err = l.handleEmailAction(ctx, typedMapRequest, action, action.Template, requestLanguage)
+			if err != nil {
+				subLog.With("err", err).Error("Failed to handle email action")
+			} else {
+				subLog.Debug("Email action handled")
+			}
+		case notification_models.SMSActionDeliveryMethod:
+			subLog := log.
+				With("action.DeliveryMethod", action.DeliveryMethod).
+				With("action.Name", action.Name)
+			err = l.handleSMSAction(ctx, typedMapRequest, action, action.Template, requestLanguage)
+			if err != nil {
+				subLog.With("err", err).Error("Failed to handle sms action")
+			} else {
+				subLog.Debug("Sms action handled")
+			}
+		case notification_models.PUSHWebActionDeliveryMethod:
+			subLog := log.
+				With("action.DeliveryMethod", action.DeliveryMethod).
+				With("action.Name", action.Name)
+			err = l.handlePUSHWebAction(ctx, typedMapRequest, action, action.Template, requestLanguage)
+			if err != nil {
+				subLog.With("err", err).Error("Failed to handle Push Web action")
+			} else {
+				subLog.Debug("Push Web action handled")
+			}
+		case notification_models.PUSHMobileActionDeliveryMethod:
+			subLog := log.
+				With("action.DeliveryMethod", action.DeliveryMethod).
+				With("action.Name", action.Name)
+			err = l.handlePUSHMobileAction(ctx, typedMapRequest, action, action.Template, requestLanguage)
+			if err != nil {
+				subLog.With("err", err).Error("Failed to handle Mobile push action")
+			} else {
+				subLog.Debug("Mobile push action handled")
+			}
+		default:
+			log.
+				With("action.DeliveryMethod", action.DeliveryMethod).
+				With("action.Name", action.Name).
+				With("err", err).
+				Error("Failed to handle Mobile push action")
+			return errors.NewValidationError("unsupported action type", &errors.FieldError{
+				Field:   "action_type",
+				Rule:    "actionTypeNotSupported",
+				Param:   action.DeliveryMethod.String(),
+				Message: "unsupported action type",
+			})
+		}
+	}
+
+	return nil
+}
+
+// executeActionCondition evaluates the condition template to determine if an action should be executed
+func (l *NotificationsBusinessLayer) executeActionCondition(
+	ctx context.Context,
+	request map[string]interface{},
+	actionConditionTemplate string,
+) error {
+	var err error
+	defer func() {
+		if r := recover(); r != nil {
+
+			recoveredErr, ok := r.(errors.E)
+			if !ok {
+				e, has := errors.Has(recoveredErr, errors.TemplateDoNotTriggerErrorCode)
+				if !has {
+					err = e
+				}
+			} else {
+				panic(r)
+			}
+
+			pixiecontext.GetCtxLogger(ctx).
+				With("recover", r).
+				With("stack", debug.Stack()).
+				Error("condition template recovered from panic")
+		}
+	}()
+
+	if types.IsEmpty(actionConditionTemplate) {
+		return nil
+	}
+	expander := templates.NewExpander(func(layoutName string) (string, error) {
+		return actionConditionTemplate, nil
+	})
+
+	_, err = expander.ExpandLayout(actionConditionTemplate, request)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// handleEmailAction processes an email notification action
+func (l *NotificationsBusinessLayer) handleEmailAction(
+	ctx context.Context,
+	request map[string]interface{},
+	action notifications_entities.Action,
+	tmpl notifications_entities.Template,
+	language language_models.LanguageEnum,
+) error {
+	actionPayload, err := l.adapters.ActionsAdapter.PayloadFromJSONB(action.DeliveryMethod, action.ActionPayload)
+	if err != nil {
+		return err
+	}
+
+	emailActionPayload, ok := actionPayload.(notification_models.EmailDeliveryMethodPayload)
+	if !ok {
+		return errors.NewValidationError("invalid action payload type", &errors.FieldError{
+			Field:   "action_payload",
+			Rule:    "invalidPayloadType",
+			Message: "invalid action payload type",
+		})
+	}
+
+	expander := templates.NewExpander(func(layoutName string) (string, error) {
+		layout, err := l.dataLayer.TemplatesRepository.GetTemplateByName(layoutName, language)
+		if err != nil {
+			return layout, db_errors.Handle(err)
+		}
+
+		return layout, nil
+	})
+
+	newTos, err := expander.ExpandLayout(emailActionPayload.To, request)
+	if err != nil {
+		return err
+	}
+
+	for _, newTo := range strings.Split(newTos, ",") {
+		newSubject, err := expander.ExpandLayout(emailActionPayload.Subject, request)
+		if err != nil {
+			return err
+		}
+
+		request["email_subject"] = newSubject
+		request["email_to"] = newTo
+
+		body, err := expander.ExpandLayout(
+			types.UnsafeString(tmpl.Template),
+			request,
+		)
+		if err != nil {
+			return err
+		}
+
+		response, err := l.emailService.Send(ctx, newTo, newSubject, body)
+		_, activityLogErr := l.dataLayer.ActivityLogsRepository.Insert(l.adapters.ActivityLogsAdapter.AdaptToEntity(notification_models.NotificationActivityLog{
+			PublicToken: uid.NewUUID(),
+			ActionID:    action.ID,
+			TemplateID:  tmpl.ID,
+			Payload: notification_models.NotificationActivityLogPayload{
+				ActionPayloadRequest: emailActionPayload,
+				Notification:         types.UnsafeBytes(body),
+				AdditionalData: map[string]any{
+					"email_service_response": response,
+					"expanded_to":            newTo,
+					"expanded_subject":       newSubject,
+					"email_service_error":    err,
+					"event":                  request,
+				},
+			},
+		}))
+
+		if activityLogErr != nil {
+			pixiecontext.GetCtxLogger(ctx).With("err", db_errors.Handle(activityLogErr)).Error("Failed to insert activity log")
+		}
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// handleSMSAction processes an SMS notification action
+func (l *NotificationsBusinessLayer) handleSMSAction(ctx context.Context, request any, action notifications_entities.Action, tmpl notifications_entities.Template, language language_models.LanguageEnum) error {
+	actionPayload, err := l.adapters.ActionsAdapter.PayloadFromJSONB(action.DeliveryMethod, action.ActionPayload)
+	if err != nil {
+		return err
+	}
+
+	smsActionPayload, ok := actionPayload.(notification_models.SMSDeliveryMethodPayload)
+	if !ok {
+		return errors.NewValidationError("invalid action payload type", &errors.FieldError{
+			Field:   "action_payload",
+			Rule:    "invalidPayloadType",
+			Message: "invalid action payload type",
+		})
+	}
+
+	expander := templates.NewExpander(func(layoutName string) (string, error) {
+		layout, err := l.dataLayer.TemplatesRepository.GetTemplateByName(layoutName, language)
+		if err != nil {
+			return layout, db_errors.Handle(err)
+		}
+
+		return layout, nil
+	})
+
+	newPhoneNumber, err := expander.ExpandLayout(smsActionPayload.PhoneNumber, request)
+	if err != nil {
+		return err
+	}
+
+	body, err := expander.ExpandLayout(
+		types.UnsafeString(tmpl.Template),
+		request,
+	)
+	if err != nil {
+		return err
+	}
+
+	response, err := l.smsService.Send(newPhoneNumber, body, nil)
+	defer func() {
+		_, activityLogErr := l.dataLayer.ActivityLogsRepository.Insert(l.adapters.ActivityLogsAdapter.AdaptToEntity(notification_models.NotificationActivityLog{
+			PublicToken: uid.NewUUID(),
+			ActionID:    action.ID,
+			TemplateID:  tmpl.ID,
+			Payload: notification_models.NotificationActivityLogPayload{
+				ActionPayloadRequest: smsActionPayload,
+				Notification:         types.UnsafeBytes(body),
+				AdditionalData: map[string]any{
+					"sms_service_response":  response,
+					"expanded_phone_number": newPhoneNumber,
+					"sms_service_error":     err,
+					"event":                 request,
+				},
+			},
+		}))
+
+		if activityLogErr != nil {
+			pixiecontext.GetCtxLogger(ctx).With("err", db_errors.Handle(activityLogErr)).Error("Failed to insert activity log")
+		}
+	}()
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// handlePUSHMobileAction processes a mobile push notification action
+func (l *NotificationsBusinessLayer) handlePUSHMobileAction(ctx context.Context, request any, action notifications_entities.Action, tmpl notifications_entities.Template, language language_models.LanguageEnum) error {
+	actionPayload, err := l.adapters.ActionsAdapter.PayloadFromJSONB(action.DeliveryMethod, action.ActionPayload)
+	if err != nil {
+		return err
+	}
+
+	pushMobileActionPayload, ok := actionPayload.(notification_models.PUSHMobileDeliveryMethodPayload)
+	if !ok {
+		return errors.NewValidationError("invalid action payload type", &errors.FieldError{
+			Field:   "action_payload",
+			Rule:    "invalidPayloadType",
+			Message: "invalid action payload type",
+		})
+	}
+
+	expander := templates.NewExpander(func(layoutName string) (string, error) {
+		layout, err := l.dataLayer.TemplatesRepository.GetTemplateByName(layoutName, language)
+		if err != nil {
+			return layout, db_errors.Handle(err)
+		}
+
+		return layout, nil
+	})
+
+	newUserToken, err := expander.ExpandLayout(pushMobileActionPayload.UserToken, request)
+	if err != nil {
+		return err
+	}
+	newTitle, err := expander.ExpandLayout(pushMobileActionPayload.Title, request)
+	if err != nil {
+		return err
+	}
+
+	for k, v := range pushMobileActionPayload.AdditionalData {
+		newVal, err := expander.ExpandLayout(v, request)
+		if err != nil {
+			return err
+		}
+
+		pushMobileActionPayload.AdditionalData[k] = newVal
+	}
+
+	body, err := expander.ExpandLayout(
+		types.UnsafeString(tmpl.Template),
+		request,
+	)
+	if err != nil {
+		return err
+	}
+
+	response, err := l.pushNotificationService.SendPushNotificationToToken(newUserToken, newTitle, body, pushMobileActionPayload.AdditionalData)
+	defer func() {
+		_, activityLogErr := l.dataLayer.ActivityLogsRepository.Insert(l.adapters.ActivityLogsAdapter.AdaptToEntity(notification_models.NotificationActivityLog{
+			PublicToken: uid.NewUUID(),
+			ActionID:    action.ID,
+			TemplateID:  tmpl.ID,
+			Payload: notification_models.NotificationActivityLogPayload{
+				ActionPayloadRequest: pushMobileActionPayload,
+				Notification:         types.UnsafeBytes(body),
+				AdditionalData: map[string]any{
+					"push_notification_service_response":   response,
+					"expanded_user_token":                  newUserToken,
+					"expanded_title":                       newTitle,
+					"push_mobile_delivery_additional_data": pushMobileActionPayload.AdditionalData,
+					"push_notification_error":              err,
+					"event":                                request,
+				},
+			},
+		}))
+
+		if activityLogErr != nil {
+			pixiecontext.GetCtxLogger(ctx).With("err", db_errors.Handle(activityLogErr)).Error("Failed to insert activity log")
+		}
+	}()
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GetDeliveryMethodsWithSchemas returns available delivery methods with their schemas
+func (l *NotificationsBusinessLayer) GetDeliveryMethodsWithSchemas(_ context.Context) any {
+	return notification_models.ActionDeliveryMethodEnumActionDeliveryMethodPayloadSchemasList
+}
+
+// GetActionPossibleStatus returns possible action status values
+func (l *NotificationsBusinessLayer) GetActionPossibleStatus(_ context.Context) any {
+	return notification_models.ActionStatusEnumList
+}
+
+// GetGlobalTemplateHelpersWithUsage returns global template helpers with usage examples
+func (l *NotificationsBusinessLayer) GetGlobalTemplateHelpersWithUsage(_ context.Context) any {
+	return struct {
+		Description       any `json:"description"`
+		RegisteredHelpers any `json:"registered_helpers"`
+	}{
+		Description:       utils.SchemaDescriptions(templates.GlobalRegisterHelper{}),
+		RegisteredHelpers: templates.GlobalRegisteredHelpersWithExample,
+	}
+}
+
+// GetAllTemplates retrieves all templates with pagination
+func (l *NotificationsBusinessLayer) GetAllTemplates(ctx context.Context, queryParams map[string][]string) (operators.PaginatedResult[[]notification_models.Template], error) {
+	var (
+		templateEntities []notifications_entities.Template
+		templateModels   []notification_models.Template
+		records          *operators.UntypedPaginatedResult
+		err              error
+	)
+
+	err = l.dataLayer.Transaction(ctx, func(tx *database.DB) error {
+		txTemplatesRepo := l.dataLayer.TemplatesRepository.WithTx(tx)
+
+		records, err = txTemplatesRepo.GetAllThroughPipeline(
+			ctx,
+			pipeline.NewPipeline(pixiecontext.GetCtxLogger(ctx)).
+				AddOperator(operators.NewGlobalSearchOperator(queryParams, "search",
+					pipelineModels.SearchableProperty{Field: "name", Type: "text", LikeBefore: true, LikeAfter: true, Unaccent: true},
+				)).
+				AddOperator(operators.NewSearchInPropertiesOperator(queryParams, "search_in",
+					pipelineModels.SearchableProperty{Field: "name", Type: "text", LikeBefore: true, LikeAfter: true, Unaccent: true},
+				)).
+				AddOperator(operators.NewOrderByOperator(queryParams, true, []string{"-updated_at"},
+					pipelineModels.SearchableProperty{Field: "name", Type: "text"},
+					pipelineModels.SearchableProperty{Field: "created_at", Type: "date"},
+					pipelineModels.SearchableProperty{Field: "updated_at", Type: "date"},
+					pipelineModels.SearchableProperty{Field: "deleted_at", Type: "date"},
+				)).
+				AddOperator(operators.NewPaginateOperator(queryParams, &templateEntities, 10, 20, 50, 100)),
+		)
+		if err != nil {
+			return err
+		}
+
+		templateModels = l.adapters.TemplateAdapter.AdaptCollection(templateEntities)
+
+		return err
+	}, &database.TxOptions{
+		Isolation: database.IsolationLevelReadCommitted,
+		ReadOnly:  true,
+	})
+
+	if err != nil {
+		return operators.PaginatedResult[[]notification_models.Template]{}, err
+	}
+
+	return operators.PaginatedResult[[]notification_models.Template]{
+		UntypedPaginatedResult: *records,
+		Data:                   templateModels,
+	}, nil
+}
+
+// GetNotificationByPublicToken retrieves a notification by its public token
+func (l *NotificationsBusinessLayer) GetNotificationByPublicToken(_ context.Context, publicToken string) (any, error) {
+	res, err := l.dataLayer.ActivityLogsRepository.GetNotificationByPublicToken(publicToken)
+	return res, err
+}
+
+// GetEventTypesWithDefinitions returns event types with their definitions
+func (l *NotificationsBusinessLayer) GetEventTypesWithDefinitions(ctx context.Context) (any, error) {
+	existingRegistered := maps.MapValues(message_factory.Singleton.GetRegisteredEvents())
+
+	type event struct {
+		EventType            string                        `json:"event_type"`
+		Descriptions         utils.SchemaDescriptionsModel `json:"descriptions,omitempty"`
+		ActionDeliveryMethod map[string]int64              `json:"action_delivery_method"`
+	}
+
+	var registered = make([]event, len(existingRegistered))
+	err := l.dataLayer.Transaction(ctx, func(db *database.DB) error {
+		txRepo := l.dataLayer.ActionsRepository.WithTx(db)
+
+		for i := range existingRegistered {
+			actionsQtyWithMethod, err := txRepo.CountByEventTypeWithDeliveryMethods(existingRegistered[i].MessageType.String())
+			if err != nil {
+				return err
+			}
+
+			ev := event{
+				EventType:    existingRegistered[i].MessageType.String(),
+				Descriptions: existingRegistered[i].Descriptions,
+			}
+
+			ev.ActionDeliveryMethod = make(map[string]int64, len(actionsQtyWithMethod))
+			for _, action := range actionsQtyWithMethod {
+				ev.ActionDeliveryMethod[action.DeliveryMethod.String()] = action.Count
+			}
+
+			registered[i] = ev
+		}
+
+		return nil
+	})
+
+	return registered, db_errors.Handle(err)
+}
+
+// GetEventActions retrieves actions for a specific event type
+func (l *NotificationsBusinessLayer) GetEventActions(ctx context.Context, eventType string) (any, error) {
+	_, exist := message_factory.Singleton.GetRegisteredEvents()[types.PayloadType(eventType)]
+	if !exist {
+		return nil, errors.NewValidationError("requested type is not registered", &errors.FieldError{
+			Field:   eventType,
+			Rule:    "eventTypeNotRegistered",
+			Param:   "eventType",
+			Message: fmt.Sprintf("event type %s not found", eventType),
+		})
+	}
+
+	actions, err := l.dataLayer.ActionsRepository.GetActionsByEventType(eventType)
+	if err != nil {
+		return nil, db_errors.Handle(err)
+	}
+
+	return l.adapters.ActionsAdapter.AdaptCollection(actions), nil
+}
+
+// CreateTemplate creates a new notification template
+func (l *NotificationsBusinessLayer) CreateTemplate(ctx context.Context, templateName string, templateLanguage language_models.LanguageEnum, templateContent []byte) (uid.UID, error) {
+	entity := notifications_entities.Template{
+		Name:     templateName,
+		Language: templateLanguage,
+		Template: templateContent,
+	}
+
+	res, err := l.dataLayer.TemplatesRepository.Insert(entity)
+	return res.ID, db_errors.Handle(err)
+}
+
+// UpdateTemplate updates an existing notification template
+func (l *NotificationsBusinessLayer) UpdateTemplate(ctx context.Context, templateID uid.UID, templateName string, templateLanguage language_models.LanguageEnum, templateContent []byte) (uid.UID, error) {
+	entity := notifications_entities.Template{
+		ID:       templateID,
+		Name:     templateName,
+		Language: templateLanguage,
+		Template: templateContent,
+	}
+
+	res, err := l.dataLayer.TemplatesRepository.Update(entity)
+	return res.ID, db_errors.Handle(err)
+}
+
+// CreateAction creates a new notification action
+func (l *NotificationsBusinessLayer) CreateAction(
+	ctx context.Context,
+	actionName string,
+	actionTriggerEventType string,
+	actionLanguage language_models.LanguageEnum,
+	actionDeliveryMethod notification_models.ActionDeliveryMethodEnum,
+	actionStatus notification_models.ActionStatusEnum,
+	actionPayload any,
+	actionTemplateID uid.UID,
+	actionConditionTemplate string,
+) (uid.UID, error) {
+	jsonb, err := serializer.ToJSONB(actionPayload)
+	if err != nil {
+		return uid.Nil, err
+	}
+
+	_, err = l.adapters.ActionsAdapter.PayloadFromJSONB(actionDeliveryMethod, jsonb)
+	if err != nil {
+		return uid.Nil, err
+	}
+
+	entity := notifications_entities.Action{
+		Name:              actionName,
+		EventType:         actionTriggerEventType,
+		Language:          actionLanguage,
+		DeliveryMethod:    actionDeliveryMethod,
+		ActionStatus:      actionStatus,
+		ActionPayload:     jsonb,
+		TemplateID:        actionTemplateID,
+		ConditionTemplate: actionConditionTemplate,
+	}
+
+	res, err := l.dataLayer.ActionsRepository.Insert(entity)
+	return res.ID, db_errors.Handle(err)
+}
+
+// UpdateAction updates an existing notification action
+func (l *NotificationsBusinessLayer) UpdateAction(
+	ctx context.Context,
+	actionID uid.UID,
+	actionName string,
+	actionEventType string,
+	actionLanguage language_models.LanguageEnum,
+	actionMethod notification_models.ActionDeliveryMethodEnum,
+	actionStatus notification_models.ActionStatusEnum,
+	actionPayload any,
+	templateID uid.UID,
+	actionConditionTemplate string,
+) (uid.UID, error) {
+	jsonb, err := serializer.ToJSONB(actionPayload)
+	if err != nil {
+		return uid.Nil, err
+	}
+
+	_, err = l.adapters.ActionsAdapter.PayloadFromJSONB(actionMethod, jsonb)
+	if err != nil {
+		return uid.Nil, err
+	}
+
+	entity := notifications_entities.Action{
+		ID:                actionID,
+		Name:              actionName,
+		EventType:         actionEventType,
+		Language:          actionLanguage,
+		DeliveryMethod:    actionMethod,
+		ActionStatus:      actionStatus,
+		ActionPayload:     jsonb,
+		TemplateID:        templateID,
+		ConditionTemplate: actionConditionTemplate,
+	}
+
+	res, err := l.dataLayer.ActionsRepository.Updates(entity)
+	return res.ID, db_errors.Handle(err)
+}
+
+// GetTemplateByID retrieves a template by ID
+func (l *NotificationsBusinessLayer) GetTemplateByID(ctx context.Context, templateID uint64) (notification_models.Template, error) {
+	tmpl, err := l.dataLayer.TemplatesRepository.GetByID(templateID)
+	if err != nil {
+		return notification_models.Template{}, db_errors.Handle(err)
+	}
+
+	return l.adapters.TemplateAdapter.Adapt(tmpl), nil
+}
+
+// GetActionByID retrieves an action by ID
+func (l *NotificationsBusinessLayer) GetActionByID(ctx context.Context, actionID uint64) (notification_models.Action, error) {
+	action, err := l.dataLayer.ActionsRepository.GetByID(actionID)
+	if err != nil {
+		return notification_models.Action{}, db_errors.Handle(err)
+	}
+
+	return l.adapters.ActionsAdapter.Adapt(action), nil
+}
+
+// GetActionForEventTypeAndLanguage retrieves actions for a specific event type and language
+func (l *NotificationsBusinessLayer) GetActionForEventTypeAndLanguage(ctx context.Context, eventType string, language string) ([]notification_models.Action, error) {
+	actionsWithTemplates, err := l.dataLayer.ActionsRepository.GetActionsForEventTypeAndLanguage(
+		eventType,
+		language_models.LanguageEnum(language),
+	)
+	if err != nil {
+		return nil, db_errors.Handle(err)
+	}
+
+	if len(actionsWithTemplates) == 0 {
+		return []notification_models.Action{}, nil
+	}
+
+	return l.adapters.ActionsAdapter.AdaptCollection(actionsWithTemplates), nil
+}
+
+// GetActivityLogs retrieves activity logs with pagination
+func (l *NotificationsBusinessLayer) GetActivityLogs(
+	ctx context.Context,
+	queryParams map[string][]string,
+) (operators.PaginatedResult[[]notification_models.NotificationActivityLog], error) {
+
+	var (
+		templateEntities []notifications_entities.ActivityLog
+		paginatedRecords *operators.PaginatedResult[[]notifications_entities.ActivityLog]
+		err              error
+	)
+
+	err = l.dataLayer.Transaction(ctx, func(tx *database.DB) error {
+		txActivityLogRepo := l.dataLayer.ActivityLogsRepository.WithTx(tx)
+
+		records, err := txActivityLogRepo.GetAllThroughPipeline(
+			ctx,
+			pipeline.NewPipeline(pixiecontext.GetCtxLogger(ctx)).
+				AddOperator(operators.NewGlobalSearchOperator(queryParams, "search",
+					pipelineModels.SearchableProperty{Field: "\"Template\".name", Type: "text", LikeBefore: true, LikeAfter: true, Unaccent: true, Ilike: true},
+					pipelineModels.SearchableProperty{Field: "\"Action\".name", Type: "text", LikeBefore: true, LikeAfter: true, Unaccent: true, Ilike: true},
+					pipelineModels.SearchableProperty{Field: "\"Action\".event_type", Type: "text", LikeBefore: true, LikeAfter: true, Unaccent: true, Ilike: true},
+				)).
+				AddOperator(operators.NewSearchInPropertiesOperator(queryParams, "search_in",
+					pipelineModels.SearchableProperty{Field: "\"Template\".name", Type: "text", LikeBefore: true, LikeAfter: true, Unaccent: true, Ilike: true},
+					pipelineModels.SearchableProperty{Field: "\"Action\".name", Type: "text", LikeBefore: true, LikeAfter: true, Unaccent: true, Ilike: true},
+					pipelineModels.SearchableProperty{Field: "\"Action\".event_type", Type: "text", LikeBefore: true, LikeAfter: true, Unaccent: true, Ilike: true},
+				)).
+				AddOperator(operators.NewOrderByOperator(queryParams, true, []string{"-updated_at"},
+					pipelineModels.SearchableProperty{Field: "name", Type: "text"},
+					pipelineModels.SearchableProperty{Field: "created_at", Type: "date"},
+					pipelineModels.SearchableProperty{Field: "updated_at", Type: "date"},
+					pipelineModels.SearchableProperty{Field: "deleted_at", Type: "date"},
+				)).
+				AddOperator(operators.NewPaginateOperator(queryParams, &templateEntities, 10, 20, 50, 100)),
+		)
+		if err != nil {
+			return err
+		}
+
+		paginatedRecords = &operators.PaginatedResult[[]notifications_entities.ActivityLog]{
+			UntypedPaginatedResult: *records,
+			Data:                   templateEntities,
+		}
+		return err
+	}, &database.TxOptions{
+		Isolation: database.IsolationLevelReadCommitted,
+		ReadOnly:  true,
+	})
+
+	if err != nil {
+		return operators.PaginatedResult[[]notification_models.NotificationActivityLog]{}, db_errors.Handle(err)
+	}
+
+	return l.adapters.ActivityLogsAdapter.AdaptPaginatedCollection(paginatedRecords), nil
+}
+
+// CreatePushNotification creates and sends a push notification
+func (l *NotificationsBusinessLayer) CreatePushNotification(
+	ctx context.Context,
+	title string,
+	message string,
+	action string,
+	userID uid.UID,
+) error {
+
+	userToken, err := l.dataLayer.UserFirebaseTokenRepository.GetLatestActiveByUserID(userID)
+	if err != nil {
+		return db_errors.Handle(err)
+	}
+
+	pushEvent := event.NewGenericPushNotificationEvent(
+		fmt.Sprintf("push-notification-%s", uid.NewUUID()),
+		userToken.FcmToken,
+		title,
+		message,
+		action,
+		userID,
+	)
+
+	err = pushEvent.Emit(ctx)
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).
+			With("error", err).
+			With("user_token", userToken).
+			With("title", title).
+			Error("failed to emit generic push notification event")
+		return err
+	}
+
+	pixiecontext.GetCtxLogger(ctx).
+		With("user_token", userToken).
+		With("title", title).
+		With("user_id", userID).
+		Debug("successfully emitted generic push notification event")
+
+	return nil
+}
+
+// handlePUSHWebAction processes a web push notification action
+func (l *NotificationsBusinessLayer) handlePUSHWebAction(_ context.Context, _ map[string]interface{}, _ notifications_entities.Action, _ notifications_entities.Template, _ language_models.LanguageEnum) error {
+	panic("//TODO: implement this function")
+}

@@ -1,0 +1,223 @@
+package authentication_business_layer
+
+import (
+	"context"
+	"strings"
+
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/errors/db_errors"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"github.com/pixie-sh/di-go"
+
+	internaldi "{{ .ModuleName }}/infra/di"
+	"{{ .ModuleName }}/internal/adapters/authentication_adapters"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_entities"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_services"
+	"{{ .ModuleName }}/pkg/models/auth"
+)
+
+// UserProfileBusinessLayerConfiguration holds configuration for user profile operations.
+type UserProfileBusinessLayerConfiguration struct {
+	UserDataLayerConfiguration         authentication_data_layer.UserDataLayerConfiguration         `json:"user_data_layer"`
+	UserServiceConfiguration           authentication_services.UserServiceConfiguration             `json:"user_service"`
+	UserOtpServiceConfiguration        authentication_services.UserOtpServiceConfiguration          `json:"user_otp_service"`
+	RegistrationDataLayerConfiguration authentication_data_layer.RegistrationDataLayerConfiguration `json:"registration_data_layer"`
+}
+
+func (p UserProfileBusinessLayerConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(p, lookupPath)
+}
+
+// UserProfileBusinessLayer handles user profile business logic including CRUD operations.
+type UserProfileBusinessLayer struct {
+	config                UserProfileBusinessLayerConfiguration
+	userDataLayer         *authentication_data_layer.UserDataLayer
+	registrationDataLayer *authentication_data_layer.RegistrationDataLayer
+	userService           *authentication_services.UserService
+	userOtpService        *authentication_services.UserOtpService
+	authAdapters          *authentication_adapters.Adapters
+}
+
+// RegistryUserProfileBusinessLayerConfiguration creates a configuration from DI context.
+func RegistryUserProfileBusinessLayerConfiguration(ctx di.Context, opts *di.RegistryOpts) (*UserProfileBusinessLayerConfiguration, error) {
+	return di.ConfigurationLookup[*UserProfileBusinessLayerConfiguration](ctx, opts)
+}
+
+// RegistryUserProfileBusinessLayer creates a UserProfileBusinessLayer from DI context.
+func RegistryUserProfileBusinessLayer(ctx di.Context, opts *di.RegistryOpts) (*UserProfileBusinessLayer, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	cfg, err := di.CreateConfiguration[*UserProfileBusinessLayerConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	userDataLayer, err := di.Create[*authentication_data_layer.UserDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenUserDataLayer))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for UserProfileBusinessLayer", internaldi.RegistryTokenUserDataLayer)
+		return nil, err
+	}
+
+	registrationDataLayer, err := di.Create[*authentication_data_layer.RegistrationDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenRegistrationDataLayer))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for UserProfileBusinessLayer", internaldi.RegistryTokenRegistrationDataLayer)
+		return nil, err
+	}
+
+	userService, err := di.Create[*authentication_services.UserService](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenUserService))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for UserProfileBusinessLayer", internaldi.RegistryTokenUserService)
+		return nil, err
+	}
+
+	userOtpService, err := di.Create[*authentication_services.UserOtpService](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenUserOtpService))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for UserProfileBusinessLayer", internaldi.RegistryTokenUserOtpService)
+		return nil, err
+	}
+
+	return NewUserProfileBusinessLayer(ctx, *cfg, userDataLayer, registrationDataLayer, userService, userOtpService, authentication_adapters.NewAdapters())
+}
+
+// NewUserProfileBusinessLayer creates a new UserProfileBusinessLayer instance.
+func NewUserProfileBusinessLayer(
+	_ context.Context,
+	config UserProfileBusinessLayerConfiguration,
+	userDataLayer *authentication_data_layer.UserDataLayer,
+	registrationDataLayer *authentication_data_layer.RegistrationDataLayer,
+	userService *authentication_services.UserService,
+	userOtpService *authentication_services.UserOtpService,
+	authAdapters *authentication_adapters.Adapters,
+) (*UserProfileBusinessLayer, error) {
+	return &UserProfileBusinessLayer{
+		config:                config,
+		userDataLayer:         userDataLayer,
+		registrationDataLayer: registrationDataLayer,
+		userService:           userService,
+		userOtpService:        userOtpService,
+		authAdapters:          authAdapters,
+	}, nil
+}
+
+// GetUserProfile retrieves a user profile by user ID.
+func (l *UserProfileBusinessLayer) GetUserProfile(ctx context.Context, userID uid.UID) (auth.UserProfile, error) {
+	user, err := l.userService.GetByID(ctx, userID)
+	if err != nil {
+		return auth.UserProfile{}, db_errors.Handle(err)
+	}
+
+	return l.authAdapters.UserAdapter.AdaptUserProfile(user), nil
+}
+
+// UpdateUserProfile updates a user's profile information.
+func (l *UserProfileBusinessLayer) UpdateUserProfile(ctx context.Context, userID uid.UID, request auth.UpdateUserProfileRequest) (auth.UpdateUserProfileResponse, error) {
+	log := pixiecontext.GetCtxLogger(ctx).With("userID", userID)
+
+	var userUpdated auth_entities.User
+	err := l.userDataLayer.Transaction(ctx, func(tx *database.DB) error {
+		// Note: Email change functionality is commented out for future implementation
+		// When implementing email change:
+		// 1. Check if email is already taken by another user
+		// 2. Store the pending email change in a temporary table
+		// 3. Send OTP to the new email
+		// 4. Require user to verify before updating
+
+		updates := map[string]interface{}{
+			"full_name": strings.TrimSpace(request.FullName),
+		}
+
+		txUserService := l.userService.WithTx(tx)
+		err := txUserService.UpdateUserProfile(ctx, userID, updates)
+		if err != nil {
+			return err
+		}
+
+		userUpdated, err = l.userService.GetByID(ctx, userID)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}, &database.TxOptions{ReadOnly: false, Isolation: database.IsolationLevelRepeatableRead})
+	if err != nil {
+		log.With("err", err).Error("failed to update user profile")
+		return auth.UpdateUserProfileResponse{}, db_errors.Handle(err)
+	}
+
+	log.Debug("user profile updated successfully")
+	return auth.UpdateUserProfileResponse{
+		UserProfile: l.authAdapters.UserAdapter.AdaptUserProfile(userUpdated),
+	}, nil
+}
+
+// GetUserByID retrieves a user by their ID (for admin operations).
+func (l *UserProfileBusinessLayer) GetUserByID(ctx context.Context, userID uid.UID) (auth_entities.User, error) {
+	user, err := l.userService.GetByID(ctx, userID)
+	if err != nil {
+		return auth_entities.User{}, db_errors.Handle(err)
+	}
+
+	return user, nil
+}
+
+// GetUserByEmail retrieves a user by their email address.
+func (l *UserProfileBusinessLayer) GetUserByEmail(ctx context.Context, email string) (auth_entities.User, error) {
+	emailLower := strings.ToLower(email)
+	user, err := l.userService.GetByEmail(ctx, emailLower)
+	if err != nil {
+		return auth_entities.User{}, db_errors.Handle(err)
+	}
+
+	return user, nil
+}
+
+// DeleteUser soft-deletes a user account.
+func (l *UserProfileBusinessLayer) DeleteUser(ctx context.Context, userID uid.UID) error {
+	log := pixiecontext.GetCtxLogger(ctx).With("userID", userID)
+
+	err := l.userDataLayer.Transaction(ctx, func(tx *database.DB) error {
+		txUserService := l.userService.WithTx(tx)
+
+		// Verify user exists
+		_, err := txUserService.GetByID(ctx, userID)
+		if err != nil {
+			return err
+		}
+
+		// Perform soft delete
+		return txUserService.DeleteUser(ctx, userID)
+	}, &database.TxOptions{ReadOnly: false, Isolation: database.IsolationLevelReadCommitted})
+
+	if err != nil {
+		log.With("err", err).Error("failed to delete user")
+		return db_errors.Handle(err)
+	}
+
+	log.Debug("user deleted successfully")
+	return nil
+}
+
+// UpdateUserStatus updates a user's account status.
+func (l *UserProfileBusinessLayer) UpdateUserStatus(ctx context.Context, userID uid.UID, status string) error {
+	log := pixiecontext.GetCtxLogger(ctx).With("userID", userID).With("status", status)
+
+	err := l.userDataLayer.Transaction(ctx, func(tx *database.DB) error {
+		txUserService := l.userService.WithTx(tx)
+
+		updates := map[string]interface{}{
+			"status": status,
+		}
+
+		return txUserService.UpdateUserProfile(ctx, userID, updates)
+	}, &database.TxOptions{ReadOnly: false, Isolation: database.IsolationLevelReadCommitted})
+
+	if err != nil {
+		log.With("err", err).Error("failed to update user status")
+		return db_errors.Handle(err)
+	}
+
+	log.Debug("user status updated successfully")
+	return nil
+}

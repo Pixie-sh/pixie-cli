@@ -1,0 +1,71 @@
+package {{.DomainName}}_data_layer
+
+import (
+	"context"
+
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/layer"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"github.com/pixie-sh/di-go"
+
+	"{{.ModuleName}}/bundles"
+	internaldi "{{.ModuleName}}/infra/di"
+	"{{.ModuleName}}/internal/domains/{{.DomainName}}/{{.DomainName}}_data_layer/{{.DomainName}}_repositories"
+)
+
+type {{.DomainNameCamel}}DataLayerConfiguration struct {
+	DatabaseORMConfiguration bundles.DatabaseORMConfiguration `json:"database_orm"`
+}
+
+func (a *{{.DomainNameCamel}}DataLayerConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(a, lookupPath)
+}
+
+type {{.DomainNameCamel}}DataLayer struct {
+	layer.GenericDataLayer
+
+	config           *{{.DomainNameCamel}}DataLayerConfiguration
+	{{.DomainNameCamel}}Repository *{{.DomainName}}_repositories.{{.DomainNameCamel}}Repository
+}
+
+func Registry{{.DomainNameCamel}}DataLayerConfiguration(ctx di.Context, opts *di.RegistryOpts) (*{{.DomainNameCamel}}DataLayerConfiguration, error) {
+	return di.ConfigurationLookup[*{{.DomainNameCamel}}DataLayerConfiguration](ctx, opts)
+}
+
+func Registry{{.DomainNameCamel}}DataLayer(ctx di.Context, opts *di.RegistryOpts) (*{{.DomainNameCamel}}DataLayer, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	config, err := di.CreateConfiguration[*{{.DomainNameCamel}}DataLayerConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		log.With("error", err).Error("Failed to initialize config for %s!", internaldi.RegistryToken{{.DomainNameCamel}}DataLayer)
+		return nil, err
+	}
+
+	orm, err := di.Create[*bundles.DatabaseORM](
+		ctx,
+		di.WithOpts(opts),
+		di.WithToken(internaldi.RegistryTokenDatabaseORM),
+	)
+	if err != nil {
+		log.With("error", err).Error("Failed to initialize %s for %s!", internaldi.RegistryTokenDatabaseORM, internaldi.RegistryToken{{.DomainNameCamel}}DataLayer)
+		return nil, err
+	}
+
+	dataLayer, err := New{{.DomainNameCamel}}DataLayer(ctx, orm.Orm, config)
+	if err != nil {
+		log.With("error", err).Error("Failed to initialize %s!", internaldi.RegistryToken{{.DomainNameCamel}}DataLayer)
+		return nil, err
+	}
+
+	return &dataLayer, nil
+}
+
+
+func New{{.DomainNameCamel}}DataLayer(_ context.Context, orm *database.Orm, layerConfig *{{.DomainNameCamel}}DataLayerConfiguration) ({{.DomainNameCamel}}DataLayer, error) {
+	return {{.DomainNameCamel}}DataLayer{
+		GenericDataLayer: layer.NewGenericDataLayer(orm),
+
+		config:           layerConfig,
+		{{.DomainNameCamel}}Repository: {{.DomainName}}_repositories.New{{.DomainNameCamel}}Repository(orm.DB),
+	}, nil
+}

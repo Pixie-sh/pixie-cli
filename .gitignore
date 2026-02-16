@@ -11,3 +11,14 @@
 /.opencode/knowledge
 /.opencode/knowledge/assets
 /.opencode/knowledge/references
+/.idea/modules.xml
+/.idea/pixie-cli.iml
+/.idea/workspace.xml
+/cli_pixie
+/bin/
+/coverage.out
+/coverage.html
+/CLAUDE.md
+/.claude
+/.claude/settings.local.json
+/.claude/commands

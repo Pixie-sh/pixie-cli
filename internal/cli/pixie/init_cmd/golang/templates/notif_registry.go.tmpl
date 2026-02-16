@@ -1,0 +1,53 @@
+package notifications
+
+import (
+	"sync"
+
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/errors-go"
+
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_business_layer"
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer"
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_services"
+
+	internaldi "{{ .ModuleName }}/infra/di"
+
+	"{{ .ModuleName }}/internal/adapters/notification_adapters"
+)
+
+var once sync.Once
+
+// Registry registers all notification-related dependencies
+func Registry() {
+	once.Do(func() {
+		// data layers
+		errors.Must(di.RegisterConfiguration[*notifications_data_layer.NotificationsDataLayerConfiguration](notifications_data_layer.RegistryNotificationsDataLayerConfiguration, di.WithToken(internaldi.RegistryTokenNotificationsDataLayer)))
+		errors.Must(di.Register[*notifications_data_layer.NotificationsDataLayer](notifications_data_layer.RegistryNotificationsDataLayer, di.WithToken(internaldi.RegistryTokenNotificationsDataLayer)))
+
+		// business layers
+		errors.Must(di.RegisterConfiguration[*notifications_business_layer.NotificationsBusinessLayerConfiguration](notifications_business_layer.RegistryNotificationsBusinessLayerConfiguration, di.WithToken(internaldi.RegistryTokenNotificationsBusinessLayer)))
+		errors.Must(di.Register[*notifications_business_layer.NotificationsBusinessLayer](notifications_business_layer.RegistryNotificationsBusinessLayer, di.WithToken(internaldi.RegistryTokenNotificationsBusinessLayer)))
+
+		// adapters
+		errors.Must(di.Register[*notification_adapters.Adapters](notification_adapters.RegistryNotificationAdapters, di.WithToken(internaldi.RegistryTokenNotificationAdapters)))
+
+		// services
+		errors.Must(di.Register[*notifications_services.HelpersService](notifications_services.RegistryNotificationsHelpersService, di.WithToken(internaldi.RegistryTokenNotificationsHelpersService)))
+
+		// Push notification service (Firebase)
+		errors.Must(di.RegisterConfiguration[*notifications_services.FirebaseServiceConfiguration](notifications_services.RegistryNotificationsPushServiceConfiguration, di.WithToken(internaldi.RegistryTokenNotificationsPushService)))
+		errors.Must(di.Register[notifications_services.PushNotificationService](notifications_services.RegistryNotificationsPushService, di.WithToken(internaldi.RegistryTokenNotificationsPushService)))
+
+		// SMS service (MessageBird)
+		errors.Must(di.RegisterConfiguration[*notifications_services.MessagebirdSmsServiceConfiguration](notifications_services.RegistryNotificationsSMSServiceConfiguration, di.WithToken(internaldi.RegistryTokenNotificationsSMSService)))
+		errors.Must(di.Register[notifications_services.SMSService](notifications_services.RegistryNotificationsSMSService, di.WithToken(internaldi.RegistryTokenNotificationsSMSService)))
+
+		// Email service (Mailgun)
+		errors.Must(di.RegisterConfiguration[*notifications_services.MailgunServiceConfiguration](notifications_services.RegistryNotificationsEmailServiceConfiguration, di.WithToken(internaldi.RegistryTokenNotificationsEmailService)))
+		errors.Must(di.Register[notifications_services.EmailService](notifications_services.RegistryNotificationsEmailService, di.WithToken(internaldi.RegistryTokenNotificationsEmailService)))
+
+		// FCM Token service
+		errors.Must(di.RegisterConfiguration[*notifications_services.FcmTokenServiceConfiguration](notifications_services.RegistryFcmTokenServiceConfiguration, di.WithToken(internaldi.RegistryTokenNotificationFcmTokenService)))
+		errors.Must(di.Register[*notifications_services.FcmTokenService](notifications_services.RegistryFcmTokenService, di.WithToken(internaldi.RegistryTokenNotificationFcmTokenService)))
+	})
+}

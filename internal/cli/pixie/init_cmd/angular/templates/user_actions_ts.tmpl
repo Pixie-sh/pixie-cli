@@ -1,0 +1,49 @@
+import { User, UpdateProfileRequest } from '@core/models/user.model';
+
+export class LoadUserProfile {
+  static readonly type = '[User] Load Profile';
+}
+
+export class LoadUserProfileSuccess {
+  static readonly type = '[User] Load Profile Success';
+  constructor(public user: User) {}
+}
+
+export class LoadUserProfileFailure {
+  static readonly type = '[User] Load Profile Failure';
+  constructor(public error: string) {}
+}
+
+export class UpdateUserProfile {
+  static readonly type = '[User] Update Profile';
+  constructor(public payload: UpdateProfileRequest) {}
+}
+
+export class UpdateUserProfileSuccess {
+  static readonly type = '[User] Update Profile Success';
+  constructor(public user: User) {}
+}
+
+export class UpdateUserProfileFailure {
+  static readonly type = '[User] Update Profile Failure';
+  constructor(public error: string) {}
+}
+
+export class ClearUserError {
+  static readonly type = '[User] Clear Error';
+}
+
+export class UploadAvatar {
+  static readonly type = '[User] Upload Avatar';
+  constructor(public file: File) {}
+}
+
+export class UploadAvatarSuccess {
+  static readonly type = '[User] Upload Avatar Success';
+  constructor(public avatarUrl: string) {}
+}
+
+export class UploadAvatarFailure {
+  static readonly type = '[User] Upload Avatar Failure';
+  constructor(public error: string) {}
+}

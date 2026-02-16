@@ -1,0 +1,9 @@
+package {{.ProjectNameSnake}}
+
+import (
+	"github.com/spf13/cobra"
+)
+
+var allCommands = []*cobra.Command{
+	cmdSetupCli(),
+}

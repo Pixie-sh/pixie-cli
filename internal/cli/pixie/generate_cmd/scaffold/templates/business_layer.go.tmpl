@@ -1,0 +1,160 @@
+package {{.DomainName}}_business_layer
+
+import (
+	"context"
+
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/errors/db_errors"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/logger-go/logger"
+	"gorm.io/gorm"
+
+	internaldi "{{.ModuleName}}/infra/di"
+	{{- if .Features.adapters}}
+	"{{.ModuleName}}/internal/adapters/{{.DomainName}}_adapters"
+	{{- end}}
+	data "{{.ModuleName}}/internal/domains/{{.DomainName}}/{{.DomainName}}_data_layer"
+	"{{.ModuleName}}/internal/domains/{{.DomainName}}/{{.DomainName}}_data_layer/{{.DomainName}}_entities"
+	"{{.ModuleName}}/internal/domains/{{.DomainName}}/{{.DomainName}}_services"
+	"{{.ModuleName}}/pkg/models/{{.DomainName}}"
+)
+
+type {{.DomainNameCamel}}BusinessLayerConfiguration struct {
+	{{.DomainNameCamel}}DataLayerConfiguration data.{{.DomainNameCamel}}DataLayerConfiguration `json:"{{.DomainName}}_data_layer"`
+	{{.DomainNameCamel}}ServiceConfiguration   {{.DomainName}}_services.{{.DomainNameCamel}}ServiceConfiguration `json:"{{.DomainName}}_service"`
+}
+
+func (a {{.DomainNameCamel}}BusinessLayerConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(a, lookupPath)
+}
+
+type {{.DomainNameCamel}}BusinessLayer struct {
+	config      {{.DomainNameCamel}}BusinessLayerConfiguration
+	dataLayer   *data.{{.DomainNameCamel}}DataLayer
+	service     *{{.DomainName}}_services.{{.DomainNameCamel}}Service
+	{{- if .Features.adapters}}
+	adapters    *{{.DomainName}}_adapters.{{.DomainNameCamel}}Adapter
+	{{- end}}
+}
+
+func Registry{{.DomainNameCamel}}BusinessLayerConfiguration(ctx di.Context, opts *di.RegistryOpts) (*{{.DomainNameCamel}}BusinessLayerConfiguration, error) {
+	return di.ConfigurationLookup[*{{.DomainNameCamel}}BusinessLayerConfiguration](ctx, opts)
+}
+
+func Registry{{.DomainNameCamel}}BusinessLayer(ctx di.Context, opts *di.RegistryOpts) (*{{.DomainNameCamel}}BusinessLayer, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	cfg, err := di.CreateConfiguration[*{{.DomainNameCamel}}BusinessLayerConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	{{.DomainName}}DataLayer, err := di.Create[*data.{{.DomainNameCamel}}DataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryToken{{.DomainNameCamel}}DataLayer))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryToken{{.DomainNameCamel}}DataLayer, internaldi.RegistryToken{{.DomainNameCamel}}BusinessLayer)
+		return nil, err
+	}
+
+	{{.DomainName}}Service, err := di.Create[*{{.DomainName}}_services.{{.DomainNameCamel}}Service](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryToken{{.DomainNameCamel}}Service))
+	if err != nil {
+		return nil, err
+	}
+
+	return New{{.DomainNameCamel}}BusinessLayer(
+		ctx,
+		*cfg,
+		{{.DomainName}}DataLayer,
+		{{.DomainName}}Service,
+		{{- if .Features.adapters}}
+		{{.DomainName}}_adapters.New{{.DomainNameCamel}}Adapter(),
+		{{- end}}
+	)
+}
+
+func New{{.DomainNameCamel}}BusinessLayer(
+	ctx context.Context,
+	config {{.DomainNameCamel}}BusinessLayerConfiguration,
+	{{.DomainName}}DataLayer *data.{{.DomainNameCamel}}DataLayer,
+	service *{{.DomainName}}_services.{{.DomainNameCamel}}Service,
+	{{- if .Features.adapters}}
+	adapters *{{.DomainName}}_adapters.{{.DomainNameCamel}}Adapter,
+	{{- end}}
+) (*{{.DomainNameCamel}}BusinessLayer, error) {
+	l := &{{.DomainNameCamel}}BusinessLayer{
+		config:    config,
+		dataLayer: {{.DomainName}}DataLayer,
+		service:   service,
+		{{- if .Features.adapters}}
+		adapters:  adapters,
+		{{- end}}
+	}
+
+	return l, l.InitLayer(ctx)
+}
+
+func (l {{.DomainNameCamel}}BusinessLayer) InitLayer(_ context.Context) error {
+	logger.Debug("empty init layer for {{.DomainNameCamel}}BusinessLayer")
+	return nil
+}
+
+func (l {{.DomainNameCamel}}BusinessLayer) Create{{.DomainNameCamel}}(ctx context.Context, req {{.DomainName}}.Create{{.DomainNameCamel}}Request, ip string) ({{.DomainName}}.{{.DomainNameCamel}}Response, error) {
+	var err error
+	var entity {{.DomainName}}_entities.{{.DomainNameCamel}}
+	var response {{.DomainName}}.{{.DomainNameCamel}}Response
+
+	err = l.dataLayer.Transaction(ctx, func(tx *gorm.DB) error {
+		txService := l.service.WithTx(tx)
+
+		// Create the entity
+		entity, err = txService.Create{{.DomainNameCamel}}(ctx, req.Name, req.Description)
+		if err != nil {
+			return db_errors.Handle(err)
+		}
+
+		return err
+	}, &database.TxOptions{
+		Isolation: database.IsolationLevelReadCommitted,
+		ReadOnly:  false,
+	})
+
+	if err != nil {
+		return response, err
+	}
+
+	// Build response
+	response = {{.DomainName}}.{{.DomainNameCamel}}Response{
+		ID:          entity.ID,
+		Name:        entity.Name,
+		Description: entity.Description,
+		CreatedAt:   entity.CreatedAt,
+		UpdatedAt:   entity.UpdatedAt,
+	}
+
+	return response, nil
+}
+
+{{- if .Features.auth}}
+func (l {{.DomainNameCamel}}BusinessLayer) GetProtected{{.DomainNameCamel}}(ctx context.Context, userID uid.UID) ({{.DomainName}}.{{.DomainNameCamel}}Response, error) {
+	var response {{.DomainName}}.{{.DomainNameCamel}}Response
+
+	entity, err := l.service.GetByID(ctx, userID)
+	if err != nil {
+		return response, db_errors.Handle(err)
+	}
+
+	// Build response
+	response = {{.DomainName}}.{{.DomainNameCamel}}Response{
+		ID:          entity.ID,
+		Name:        entity.Name,
+		Description: entity.Description,
+		CreatedAt:   entity.CreatedAt,
+		UpdatedAt:   entity.UpdatedAt,
+	}
+
+	return response, nil
+}
+{{- end}}
+
+func (l {{.DomainNameCamel}}BusinessLayer) Defer() {}

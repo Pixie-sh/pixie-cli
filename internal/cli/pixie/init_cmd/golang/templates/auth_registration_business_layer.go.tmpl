@@ -1,0 +1,352 @@
+package authentication_business_layer
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/pixie-sh/core-go/infra/events"
+	"github.com/pixie-sh/core-go/infra/state_machine"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/errors/db_errors"
+	"github.com/pixie-sh/core-go/pkg/layer"
+	"github.com/pixie-sh/core-go/pkg/types"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/errors-go"
+
+	"{{ .ModuleName }}/infra/event"
+	internaldi "{{ .ModuleName }}/infra/di"
+	"{{ .ModuleName }}/internal/adapters/authentication_adapters"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_entities"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_services"
+	"{{ .ModuleName }}/pkg/models/auth"
+	"{{ .ModuleName }}/pkg/models/session_manager_models"
+)
+
+// RegistrationBusinessLayerConfiguration holds configuration for registration operations.
+type RegistrationBusinessLayerConfiguration struct {
+	RegistrationDataLayerConfiguration authentication_data_layer.RegistrationDataLayerConfiguration `json:"registration_data_layer"`
+	UserServiceConfiguration           authentication_services.UserServiceConfiguration             `json:"user_service"`
+	UserOtpServiceConfiguration        authentication_services.UserOtpServiceConfiguration          `json:"user_otp_service"`
+}
+
+func (p RegistrationBusinessLayerConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(p, lookupPath)
+}
+
+// RegistrationBusinessLayer handles user registration business logic including OTP verification.
+type RegistrationBusinessLayer struct {
+	config                      RegistrationBusinessLayerConfiguration
+	authenticationBusinessLayer AuthenticationBusinessLayer
+	registrationDataLayer       authentication_data_layer.RegistrationDataLayer
+	userService                 authentication_services.UserService
+	userOtpService              authentication_services.UserOtpService
+	authAdapters                *authentication_adapters.Adapters
+}
+
+// RegistryRegistrationBusinessLayerConfiguration creates a configuration from DI context.
+func RegistryRegistrationBusinessLayerConfiguration(ctx di.Context, opts *di.RegistryOpts) (*RegistrationBusinessLayerConfiguration, error) {
+	return di.ConfigurationLookup[*RegistrationBusinessLayerConfiguration](ctx, opts)
+}
+
+// RegistryRegistrationBusinessLayer creates a RegistrationBusinessLayer from DI context.
+func RegistryRegistrationBusinessLayer(ctx di.Context, opts *di.RegistryOpts) (*RegistrationBusinessLayer, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	cfg, err := di.CreateConfiguration[*RegistrationBusinessLayerConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	registrationDataLayer, err := di.Create[*authentication_data_layer.RegistrationDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenRegistrationDataLayer))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenRegistrationDataLayer, internaldi.RegistryTokenRegistrationBusinessLayer)
+		return nil, err
+	}
+
+	userService, err := di.Create[*authentication_services.UserService](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenUserService))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenUserService, internaldi.RegistryTokenRegistrationBusinessLayer)
+		return nil, err
+	}
+
+	userOtpService, err := di.Create[*authentication_services.UserOtpService](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenUserOtpService))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenUserOtpService, internaldi.RegistryTokenRegistrationBusinessLayer)
+		return nil, err
+	}
+
+	authenticationBusinessLayer, err := di.Create[*AuthenticationBusinessLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenAuthenticationBusinessLayer))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenAuthenticationBusinessLayer, internaldi.RegistryTokenRegistrationBusinessLayer)
+		return nil, err
+	}
+
+	return NewRegistrationBusinessLayer(ctx, *cfg, *registrationDataLayer, *userService, *userOtpService, *authenticationBusinessLayer)
+}
+
+// NewRegistrationBusinessLayer creates a new RegistrationBusinessLayer instance.
+func NewRegistrationBusinessLayer(
+	ctx context.Context,
+	config RegistrationBusinessLayerConfiguration,
+	dataLayer authentication_data_layer.RegistrationDataLayer,
+	userService authentication_services.UserService,
+	userOtpService authentication_services.UserOtpService,
+	authenticationBusinessLayer AuthenticationBusinessLayer,
+) (*RegistrationBusinessLayer, error) {
+	l := &RegistrationBusinessLayer{
+		config:                      config,
+		registrationDataLayer:       dataLayer,
+		userService:                 userService,
+		userOtpService:              userOtpService,
+		authenticationBusinessLayer: authenticationBusinessLayer,
+		authAdapters:                authentication_adapters.NewAdapters(),
+	}
+
+	return l, l.InitLayer(ctx)
+}
+
+// InitLayer initializes the business layer.
+func (l *RegistrationBusinessLayer) InitLayer(ctx context.Context) error {
+	return nil
+}
+
+// Health returns the health status of the business layer.
+func (l *RegistrationBusinessLayer) Health(ctx context.Context) layer.HealthResponse {
+	return layer.HealthResponse{
+		Err: nil,
+	}
+}
+
+// RegisterUser registers a new user with email and password, initiating OTP verification.
+func (l *RegistrationBusinessLayer) RegisterUser(
+	ctx context.Context,
+	fullName string,
+	email string,
+	password string,
+	acceptedTOS bool,
+	userIP string,
+) (auth.RegisterLoginResponse, error) {
+	if !acceptedTOS {
+		return auth.RegisterLoginResponse{}, errors.NewValidationError("Validation failed.", &errors.FieldError{
+			Field:   "accepted_tos",
+			Rule:    "isAccepted",
+			Message: "User hasn't accepted Terms of service",
+		})
+	}
+
+	var err error
+	var user auth_entities.User
+	var userStateMachine *state_machine.Machine
+	email = strings.ToLower(email) // Force email to be lowercase
+
+	pixiecontext.GetCtxLogger(ctx).With("email", email).Debug("starting user registration transaction")
+	err = l.registrationDataLayer.Transaction(ctx, func(tx *database.DB) error {
+		txSvcUser := l.userService.WithTx(tx)
+
+		existingUser, err := txSvcUser.GetByEmail(ctx, email)
+		if err != nil && !db_errors.Has(err, errors.EntityNotFoundErrorCode) {
+			return err
+		}
+
+		if !types.IsEmpty(existingUser) {
+			return errors.NewValidationError("Validation failed.", &errors.FieldError{
+				Field:   "email",
+				Rule:    "taken",
+				Message: "Email already registered",
+			}).WithErrorCode(errors.QueryDuplicatedKeyErrorCode)
+		}
+
+		// Create user with state machine
+		userType := auth_entities.UserType
+		user, err = txSvcUser.CreateUser(ctx, fullName, email, password, userType, userIP)
+		if err != nil {
+			return db_errors.Handle(err)
+		}
+
+		userStateMachine, err = authentication_services.GetUserRegistrationStateMachine(
+			ctx,
+			user.ID,
+			txSvcUser.WithStateMachineStorage(),
+			txSvcUser.WithStateMachineEntityStorage(ctx, user.ID),
+		)
+		if err != nil {
+			return db_errors.Handle(err)
+		}
+
+		_, err = userStateMachine.Trigger(ctx, auth.UserAddedTransitionEvent)
+		if err != nil {
+			return db_errors.Handle(err)
+		}
+
+		return userStateMachine.Save()
+	}, &database.TxOptions{ReadOnly: false, Isolation: database.IsolationLevelReadUncommitted})
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).With("email", email).With("err", err).Error("user registration transaction failed")
+		return auth.RegisterLoginResponse{}, db_errors.Handle(err)
+	}
+
+	ev, err := l.GenerateOTP(ctx, user.ID, user.EmailAddress, userIP)
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).With("email", email).With("err", err).Error("failed to request OTP")
+		return auth.RegisterLoginResponse{}, db_errors.Handle(err)
+	}
+
+	// Auto-verify OTP for development (remove in production with email sending)
+	resp, err := l.VerifyOTP(ctx, user.ID, user.EmailAddress, userIP, auth.VerifyOTPRequest{OTP: ev.Payload.Data().OTP})
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).With("email", email).With("err", err).Error("failed to verify OTP")
+		return auth.RegisterLoginResponse{}, db_errors.Handle(err)
+	}
+
+	return resp, nil
+}
+
+// VerifyOTP verifies the OTP code and transitions the user to active state.
+func (l *RegistrationBusinessLayer) VerifyOTP(ctx context.Context, userID uid.UID, userEmail string, ip string, req auth.VerifyOTPRequest) (auth.RegisterLoginResponse, error) {
+	log := pixiecontext.GetCtxLogger(ctx).With("userID", userID)
+
+	if req.OTP == "" {
+		return auth.RegisterLoginResponse{}, errors.NewValidationError("Validation failed.", &errors.FieldError{
+			Field:   "otp",
+			Rule:    "required",
+			Message: "OTP is required",
+		})
+	}
+
+	if len(req.OTP) != 6 {
+		return auth.RegisterLoginResponse{}, errors.NewValidationError("Validation failed.", &errors.FieldError{
+			Field:   "otp",
+			Rule:    "length",
+			Message: "OTP must be 6 digits",
+		})
+	}
+
+	log.Debug("verifying UserOTP for user")
+
+	var currentState state_machine.State
+	err := l.registrationDataLayer.Transaction(ctx, func(tx *database.DB) error {
+		txSvcUser := l.userService.WithTx(tx)
+		txOtpService := l.userOtpService.WithTx(tx)
+
+		userStateMachine, err := authentication_services.GetUserRegistrationStateMachine(
+			ctx,
+			userID,
+			txSvcUser.WithStateMachineStorage(),
+			txSvcUser.WithStateMachineEntityStorage(ctx, userID),
+		)
+		if err != nil {
+			return db_errors.Handle(err)
+		}
+
+		if userStateMachine.CurrentState() != auth.UserInVerificationState {
+			return errors.New("Validation failed.", &errors.FieldError{
+				Field:   "email",
+				Rule:    "already_verified",
+				Message: "User is already verified",
+			})
+		}
+
+		_, err = txOtpService.VerifyOTP(ctx, userID, userEmail, req.OTP)
+		if err != nil {
+			log.With("err", err).Error("failed to verify OTP")
+			return err
+		}
+
+		currentState, err = userStateMachine.Trigger(ctx, auth.UserVerifiedTransitionEvent)
+		if err != nil {
+			return db_errors.Handle(err)
+		}
+
+		err = userStateMachine.Save()
+		if err != nil {
+			return db_errors.Handle(err)
+		}
+
+		log.Debug("UserOTP verified successfully")
+		return nil
+	}, &database.TxOptions{ReadOnly: false, Isolation: database.IsolationLevelReadCommitted})
+
+	if err != nil {
+		return auth.RegisterLoginResponse{}, db_errors.Handle(err)
+	}
+
+	userType := auth_entities.UserType
+	loginResponse, err := l.authenticationBusinessLayer.buildLoginResponse(
+		ctx,
+		userID,
+		userEmail,
+		session_manager_models.UnknownAppSessionChannel,
+		ip,
+		[]session_manager_models.JWTEntity{
+			{
+				EntityType: types.NameOf(auth_entities.User{}),
+				EntityID:   userID.String(),
+				Status:     currentState.String(),
+			},
+		},
+		userType,
+	)
+	if err != nil {
+		return auth.RegisterLoginResponse{}, db_errors.Handle(err)
+	}
+
+	return auth.RegisterLoginResponse{
+		LoginResponse: loginResponse,
+		CurrentState:  currentState,
+	}, nil
+}
+
+// GenerateOTP generates a new OTP code for the user and returns the event for sending.
+func (l *RegistrationBusinessLayer) GenerateOTP(ctx context.Context, userID uid.UID, userEmail string, userIP string) (*events.Event[event.EmailValidationOTPEmailEvent], error) {
+	var log = pixiecontext.GetCtxLogger(ctx).With("userID", userID).With("email", userEmail)
+	var userOtp *auth_entities.UserOTP
+
+	err := l.registrationDataLayer.Transaction(ctx, func(tx *database.DB) error {
+		txSvcUser := l.userService.WithTx(tx)
+		txOtpService := l.userOtpService.WithTx(tx)
+
+		userStateMachine, err := authentication_services.GetUserRegistrationStateMachine(
+			ctx,
+			userID,
+			txSvcUser.WithStateMachineStorage(),
+			txSvcUser.WithStateMachineEntityStorage(ctx, userID),
+		)
+		if err != nil {
+			return err
+		}
+
+		if userStateMachine.CurrentState() != auth.UserInVerificationState {
+			return errors.New("Validation failed.", &errors.FieldError{
+				Field:   "email",
+				Rule:    "already_verified",
+				Message: "Request new OTP not allowed for this user",
+			})
+		}
+
+		userOtp, err = txOtpService.CreateOTP(ctx, userID, userEmail)
+		if err != nil {
+			log.With("err", err).Error("failed to create OTP")
+			return err
+		}
+
+		return nil
+	}, &database.TxOptions{ReadOnly: false, Isolation: database.IsolationLevelReadCommitted})
+
+	if err != nil {
+		return nil, db_errors.Handle(err)
+	}
+
+	ev := event.NewEmailValidationOTPEmailEvent(
+		fmt.Sprintf("user-%s", userID),
+		userID,
+		userEmail,
+		userOtp.OTPCode,
+		userOtp.ExpiresAt,
+		userIP,
+	)
+	return &ev, nil
+}

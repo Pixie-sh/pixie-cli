@@ -1,0 +1,38 @@
+package auth_entities
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/models/database_models"
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+type UserTypeEnum string
+
+const (
+	UserType           UserTypeEnum = "user"
+	SuperAdminUserType UserTypeEnum = "superadmin"
+)
+
+func (s UserTypeEnum) String() string {
+	return string(s)
+}
+
+// User represents a system user
+type User struct {
+	database_models.SoftDeletable
+
+	ID           uid.UID `gorm:"primary_key,type:uuid"`
+	EmailAddress string  `gorm:"type:text;uniqueIndex:idx_users_email"`
+	FullName     string  `gorm:"type:text"`
+	Password     string  `gorm:"type:text"`
+	UserType     UserTypeEnum
+	Status       string `gorm:"type:text"`
+
+	LastLogin time.Time
+	LastIp    string `gorm:"type:text"`
+}
+
+func (User) TableName() string {
+	return "users"
+}

@@ -1,0 +1,61 @@
+import { inject, Injectable } from '@angular/core';
+import { Observable } from 'rxjs';
+import { ApiService } from './api.service';
+import { API_ENDPOINTS } from '@core/constants/api.constants';
+import {
+  LoginRequest,
+  LoginResponse,
+  RegisterRequest,
+  RegisterResponse,
+  ResetPasswordRequest,
+  RefreshTokenResponse,
+} from '@models/auth.model';
+
+@Injectable({
+  providedIn: 'root',
+})
+export class AuthApiService {
+  private readonly api = inject(ApiService);
+
+  /**
+   * Login with email and password
+   */
+  login(request: LoginRequest): Observable<LoginResponse> {
+    return this.api.post<LoginResponse>(API_ENDPOINTS.AUTH.LOGIN, request);
+  }
+
+  /**
+   * Register new user
+   */
+  register(request: RegisterRequest): Observable<RegisterResponse> {
+    return this.api.post<RegisterResponse>(API_ENDPOINTS.AUTH.REGISTER, request);
+  }
+
+  /**
+   * Request password reset
+   */
+  requestPasswordReset(email: string): Observable<void> {
+    return this.api.post<void>(API_ENDPOINTS.AUTH.FORGOT_PASSWORD, { email });
+  }
+
+  /**
+   * Reset password with token
+   */
+  resetPassword(request: ResetPasswordRequest): Observable<void> {
+    return this.api.post<void>(API_ENDPOINTS.AUTH.RESET_PASSWORD, request);
+  }
+
+  /**
+   * Refresh access token
+   */
+  refreshToken(refreshToken: string): Observable<RefreshTokenResponse> {
+    return this.api.post<RefreshTokenResponse>(API_ENDPOINTS.AUTH.REFRESH_TOKEN, { refreshToken });
+  }
+
+  /**
+   * Logout
+   */
+  logout(): Observable<void> {
+    return this.api.post<void>(API_ENDPOINTS.AUTH.LOGOUT, {});
+  }
+}

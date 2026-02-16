@@ -1,0 +1,109 @@
+package event
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/infra/events"
+	"github.com/pixie-sh/core-go/pkg/types"
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+// PasswordRecoveryOTPEmailEventType is the type identifier for password recovery OTP email events
+var PasswordRecoveryOTPEmailEventType = types.PayloadTypeOf[PasswordRecoveryOTPEmailEvent]()
+
+// PasswordRecoveryOTPEmailEvent represents a password recovery OTP email event
+type PasswordRecoveryOTPEmailEvent struct {
+	byte `event_description:"Trigger OTP to reset password for non logged in users"`
+
+	UserID     uid.UID   `json:"user_id" validate:"required" field_description:"Partner's name requesting to reset"`
+	UserEmail  string    `json:"user_email" validate:"required" field_description:"User's Email requesting to reset"`
+	OTP        string    `json:"otp" validate:"required" field_description:"Reset OTP requesting to reset"`
+	Ip         string    `json:"ip" validate:"required" field_description:"IP requesting the reset password"`
+	Agent      string    `json:"agent" validate:"required" field_description:"Agent requesting the reset password"`
+	ValidUntil time.Time `json:"valid_until" validate:"required" field_description:"Until when will this reset be valid"`
+}
+
+// NewPasswordRecoveryOTPEmailEvent creates a new password recovery OTP email event
+func NewPasswordRecoveryOTPEmailEvent(id string, userID uid.UID, userEmail string, otp string, validUntil time.Time, ip string, agent string) events.Event[PasswordRecoveryOTPEmailEvent] {
+	return events.NewEventWrapper[PasswordRecoveryOTPEmailEvent](
+		id,
+		PasswordRecoveryOTPEmailEventType.String(),
+		PasswordRecoveryOTPEmailEvent{
+			UserID:     userID,
+			UserEmail:  userEmail,
+			OTP:        otp,
+			ValidUntil: validUntil,
+			Ip:         ip,
+			Agent:      agent,
+		})
+}
+
+// EmailValidationOTPEmailEventType is the type identifier for email validation OTP events
+var EmailValidationOTPEmailEventType = types.PayloadTypeOf[EmailValidationOTPEmailEvent]()
+
+// EmailValidationOTPEmailEvent represents an email validation OTP event
+type EmailValidationOTPEmailEvent struct {
+	byte `event_description:"Trigger OTP to email validation for logged in users"`
+
+	UserID     uid.UID   `json:"user_id" validate:"required" field_description:"User id requesting to validation"`
+	UserEmail  string    `json:"user_email" validate:"required" field_description:"User's Email requesting"`
+	OTP        string    `json:"otp" validate:"required" field_description:"Reset OTP requested"`
+	Ip         string    `json:"ip" validate:"required" field_description:"IP from where the OTP was requested"`
+	ValidUntil time.Time `json:"valid_until" validate:"required" field_description:"Until when will this be valid"`
+}
+
+// NewEmailValidationOTPEmailEvent creates a new email validation OTP email event
+func NewEmailValidationOTPEmailEvent(
+	id string,
+	userID uid.UID,
+	userEmail string,
+	otp string,
+	validUntil time.Time,
+	ip string,
+) events.Event[EmailValidationOTPEmailEvent] {
+	return events.NewEventWrapper[EmailValidationOTPEmailEvent](
+		id,
+		EmailValidationOTPEmailEventType.String(),
+		EmailValidationOTPEmailEvent{
+			UserID:     userID,
+			UserEmail:  userEmail,
+			OTP:        otp,
+			ValidUntil: validUntil,
+			Ip:         ip,
+		})
+}
+
+// GenericPushNotificationEventType is the type identifier for generic push notification events
+var GenericPushNotificationEventType = types.PayloadTypeOf[GenericPushNotificationEvent]()
+
+// GenericPushNotificationEvent represents a generic push notification event
+type GenericPushNotificationEvent struct {
+	byte `event_description:"Generic push notification event for triggering push notifications"`
+
+	UserToken string  `json:"user_token" validate:"required" field_description:"FCM token for the target user"`
+	Title     string  `json:"title" validate:"required" field_description:"Push notification title"`
+	Message   string  `json:"message" validate:"required" field_description:"Push notification message body"`
+	Action    string  `json:"action" validate:"required" field_description:"Push notification action"`
+	UserID    uid.UID `json:"user_id" field_description:"Target user id (optional, for logging purposes)"`
+}
+
+// NewGenericPushNotificationEvent creates a new generic push notification event
+func NewGenericPushNotificationEvent(
+	id string,
+	userToken string,
+	title string,
+	message string,
+	action string,
+	userID uid.UID,
+) events.Event[GenericPushNotificationEvent] {
+	return events.NewEventWrapper[GenericPushNotificationEvent](
+		id,
+		GenericPushNotificationEventType.String(),
+		GenericPushNotificationEvent{
+			UserToken: userToken,
+			Title:     title,
+			Message:   message,
+			Action:    action,
+			UserID:    userID,
+		})
+}

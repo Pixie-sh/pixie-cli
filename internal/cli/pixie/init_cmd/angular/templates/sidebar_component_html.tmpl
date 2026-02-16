@@ -1,0 +1,43 @@
+<nav class="sidebar-nav" [class.collapsed]="collapsed">
+  <ul class="nav-list">
+    <li *ngFor="let item of items" class="nav-item">
+      <ng-container *ngIf="!item.children; else hasChildren">
+        <a
+          [routerLink]="item.route"
+          routerLinkActive="active"
+          class="nav-link"
+          (click)="onItemClick(item)"
+        >
+          <i [class]="item.icon" class="nav-icon"></i>
+          <span class="nav-label" *ngIf="!collapsed">{{ "{{" }} item.label {{ "}}" }}</span>
+          <span *ngIf="item.badge && !collapsed" class="nav-badge">{{ "{{" }} item.badge {{ "}}" }}</span>
+        </a>
+      </ng-container>
+
+      <ng-template #hasChildren>
+        <button
+          class="nav-link has-children"
+          [class.expanded]="isExpanded(item)"
+          (click)="toggleExpand(item)"
+        >
+          <i [class]="item.icon" class="nav-icon"></i>
+          <span class="nav-label" *ngIf="!collapsed">{{ "{{" }} item.label {{ "}}" }}</span>
+          <i *ngIf="!collapsed" class="expand-icon" [class]="isExpanded(item) ? 'icon-chevron-up' : 'icon-chevron-down'"></i>
+        </button>
+
+        <ul *ngIf="isExpanded(item) && !collapsed" class="nav-sublist">
+          <li *ngFor="let child of item.children" class="nav-subitem">
+            <a
+              [routerLink]="child.route"
+              routerLinkActive="active"
+              class="nav-sublink"
+              (click)="onItemClick(child)"
+            >
+              <span class="nav-label">{{ "{{" }} child.label {{ "}}" }}</span>
+            </a>
+          </li>
+        </ul>
+      </ng-template>
+    </li>
+  </ul>
+</nav>

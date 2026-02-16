@@ -1,0 +1,28 @@
+package notification_adapters
+
+import (
+	"github.com/pixie-sh/di-go"
+)
+
+// Adapters contains all notification-related adapters
+type Adapters struct {
+	ActionsAdapter      ActionAdapter
+	ActivityLogsAdapter ActivityLogAdapter
+	TemplateAdapter     TemplateAdapter
+}
+
+// NewAdapters creates a new Adapters instance with all adapters initialized
+func NewAdapters() *Adapters {
+	a := &Adapters{}
+	a.ActionsAdapter = NewActionAdapter()
+	a.TemplateAdapter = NewTemplateAdapter()
+	a.ActivityLogsAdapter = NewActivityLogAdapter(a.ActionsAdapter, a.TemplateAdapter)
+
+	return a
+}
+
+// RegistryNotificationAdapters registers the notification adapters
+func RegistryNotificationAdapters(_ di.Context, _ *di.RegistryOpts) (*Adapters, error) {
+	adapters := NewAdapters()
+	return adapters, nil
+}

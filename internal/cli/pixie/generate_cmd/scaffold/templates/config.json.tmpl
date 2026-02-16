@@ -1,0 +1,60 @@
+{
+  "#ref": {
+    "database_orm": {
+      "driver": "gorm_db_driver",
+      "values": {
+        "driver": "psql_db_driver",
+        "dsn": "host=${env.DB_HOST} user=${env.DB_USERNAME} password=${env.DB_PASSWORD} dbname=${env.DB_NAME} port=${env.DB_PORT} sslmode=${env.DB_SSLMODE}"
+      }
+    },
+    "token_service": {
+      "validity_in_seconds_token": 5259492,
+      "token_private_key": "jwt_pvt_key",
+      "token_public_key": "jwt_pub_key"
+    },
+    "redis_address": "${env.REDIS_HOST}:${env.REDIS_PORT}",
+    "redis_password": "${env.REDIS_PASSWORD}",
+    "cors_origins": "${env.CORS_ORIGINS}",
+    "authorization_api_key": "${env.AUTH_KEY}"
+  },
+  "listen_addr": "${env.LISTEN_ADDR}",
+  "listen_metrics_addr": "${env.METRICS_LISTEN_ADDR}",
+    "http_server_bundle": {
+      "cors_configuration": {
+        "allow_origins": "${#ref.cors_origins}",
+        "allow_methods": "*",
+        "allow_headers": "Content-Type,X-Requested-With,Authorization",
+        "allow_credentials": false,
+        "expose_headers": "X-Request-ID,Recaptcha-Token",
+        "max_age": 0
+      }
+    },
+  {{- if .Features.database}}
+  "{{.DomainName}}_business_layer": {
+    "{{.DomainName}}_data_layer": {
+      "database_orm": "${#ref.database_orm}"
+    },
+    "{{.DomainName}}_service": {
+        "{{.DomainName}}_data_layer": {
+          "database_orm": "${#ref.database_orm}"
+        }
+    }
+  },
+  {{- end}}
+  {{- if .Features.auth}}
+  "authorization_gates_bundle": {
+    "jwt_header_key": "authorization",
+    "authorization_gate": {
+      "value": "${#ref.authorization_api_key}",
+      "header": "X-AuthKey"
+    }
+  },
+  "token_services_bundle": {
+    "token_service": "${#ref.token_service}",
+    "token_cache": {
+      "address": "${#ref.redis_address}",
+      "db": 7
+    }
+  }
+  {{- end}}
+}

@@ -1,0 +1,73 @@
+package bundles
+
+import (
+	"context"
+
+	"github.com/pixie-sh/di-go"
+
+	internaldi "{{.ModuleName}}/infra/di"
+	"{{.ModuleName}}/infra/gates"
+)
+
+// AuthorizationGatesBundleConfiguration holds authorization configuration
+type AuthorizationGatesBundleConfiguration struct {
+	JWTAuthorizationHeaderKey string                  `json:"jwt_header_key"`
+	AuthorizationGateConfig   gates.AuthConfiguration `json:"authorization_gate"`
+}
+
+// LookupNode implements di.ConfigurationLookup interface
+func (a AuthorizationGatesBundleConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(a, lookupPath)
+}
+
+// AuthorizationGatesBundle holds authorization gates
+type AuthorizationGatesBundle struct {
+	config AuthorizationGatesBundleConfiguration
+
+	IsAuthenticated gates.IsAuthenticated
+	HasApiKey       gates.AuthorizationToken
+}
+
+// NewAuthorizationGatesBundle creates a new AuthorizationGatesBundle
+func NewAuthorizationGatesBundle(ctx context.Context, config AuthorizationGatesBundleConfiguration) (AuthorizationGatesBundle, error) {
+	isAuthenticated, err := gates.NewIsAuthenticated(ctx, config.JWTAuthorizationHeaderKey)
+	if err != nil {
+		return AuthorizationGatesBundle{}, err
+	}
+
+	hasAuthorizationToken, err := gates.NewAuthorizationToken(ctx, config.AuthorizationGateConfig)
+	if err != nil {
+		return AuthorizationGatesBundle{}, err
+	}
+
+	return AuthorizationGatesBundle{
+		config:          config,
+		IsAuthenticated: isAuthenticated,
+		HasApiKey:       hasAuthorizationToken,
+	}, nil
+}
+
+// RegistryAuthorizationGatesBundleConfiguration creates configuration from DI context
+func RegistryAuthorizationGatesBundleConfiguration(ctx di.Context, opts *di.RegistryOpts) (*AuthorizationGatesBundleConfiguration, error) {
+	cfg, err := di.ConfigurationLookup[*AuthorizationGatesBundleConfiguration](ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+// RegistryAuthorizationGatesBundle creates AuthorizationGatesBundle from DI context
+func RegistryAuthorizationGatesBundle(ctx di.Context, opts *di.RegistryOpts) (*AuthorizationGatesBundle, error) {
+	cfg, err := di.CreateConfiguration[*AuthorizationGatesBundleConfiguration](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenAuthorizationGatesBundle))
+	if err != nil {
+		return nil, err
+	}
+
+	authBundle, err := NewAuthorizationGatesBundle(ctx, *cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &authBundle, nil
+}

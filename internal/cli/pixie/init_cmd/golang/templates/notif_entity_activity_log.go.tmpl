@@ -1,0 +1,23 @@
+package notifications_entities
+
+import (
+	"github.com/pixie-sh/core-go/pkg/models/database_models"
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+// ActivityLog represents a log entry for a sent notification
+type ActivityLog struct {
+	database_models.SoftDeletable
+
+	ID          uid.UID               `gorm:"primaryKey;type:uuid"`
+	PublicToken string                `gorm:"type:varchar(255);not null;uniqueIndex:idx_notification_activity_log_public_token"`
+	ActionID    uid.UID               `gorm:"foreignKey:ActionID;type:uuid"`
+	Action      *Action               `gorm:"foreignKey:ActionID"`
+	TemplateID  uid.UID               `gorm:"foreignKey:TemplateID;type:uuid"`
+	Template    *Template             `gorm:"foreignKey:TemplateID"`
+	Payload     database_models.JSONB `gorm:"type:jsonb;not null"`
+}
+
+func (ActivityLog) TableName() string {
+	return "notification_activity_logs"
+}

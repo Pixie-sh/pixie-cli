@@ -1,0 +1,10 @@
+package models
+
+import (
+	"github.com/pixie-sh/database-helpers-go/database"
+)
+
+type CliConfiguration struct {
+	DatabaseConfiguration                  database.Configuration            `json:"database"`
+	DatabaseMigratorDatabaseConfigurations map[string]database.Configuration `json:"migrator_databases"`
+}

@@ -1,0 +1,22 @@
+package cli_pkg
+
+import (
+	"context"
+
+	"github.com/pixie-sh/errors-go"
+
+	"{{.ModuleName}}/internal/cli/{{.ProjectNameSnake}}/models"
+)
+
+func SetCtxConfiguration(parent context.Context, cfg models.CliConfiguration) context.Context {
+	return context.WithValue(parent, "cli_cfg", cfg)
+}
+
+func GetCtxConfiguration(ctx context.Context) models.CliConfiguration {
+	cfg, ok := ctx.Value("cli_cfg").(models.CliConfiguration)
+	if !ok {
+		panic(errors.New("cli_cfg not found"))
+	}
+
+	return cfg
+}

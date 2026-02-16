@@ -1,0 +1,104 @@
+package e2e_ms_{{.ServiceName}}_tests
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
+	"github.com/pixie-sh/core-go/pkg/microservice"
+	"github.com/pixie-sh/di-go"
+	"github.com/stretchr/testify/assert"
+
+	"{{.ModuleName}}/internal/e2e_tests/e2e_utils"
+	"{{.ModuleName}}/internal/ms/ms_{{.ServiceName}}"
+)
+
+func Test{{.DomainNameCamel}}Configuration(t *testing.T) {
+	redisAddress := "127.0.0.1:6379"
+	port := uint32({{.Port}}) // Use different port for each test
+	dsn := fmt.Sprintf("host=localhost port=%d user=postgres password=postgres dbname=postgres sslmode=disable TimeZone=UTC", port)
+	var cfg ms_{{.ServiceName}}.{{.DomainNameCamel}}MicroserviceConfiguration
+	cfgAfterParsing, expectedCfg, err := {{.DomainName}}MsConfiguration(dsn, redisAddress, "a", ":{{.Port}}", ":{{.MetricsPort}}", &cfg)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, cfgAfterParsing)
+	assert.JSONEq(t, string(expectedCfg), string(cfgAfterParsing))
+	assert.Equal(t, cfg.HttpServerBundleConfigurations.CorsConfiguration.AllowOrigins, "http://localhost:4200,http://localhost:4201")
+}
+
+func Test{{.DomainNameCamel}}MicroserviceBootstrap(t *testing.T) {
+	// Setup miniredis
+	mr, err := miniredis.Run()
+	assert.NoError(t, err)
+	defer mr.Close()
+	redisAddress := mr.Addr() // e.g. "127.0.0.1:6379"
+
+	// Setup test db
+	os.Setenv("LANG", "C")
+	os.Setenv("LC_ALL", "C")
+
+	port := uint32({{.Port}}) // Use different port for each test
+
+	if err := e2e_utils.KillProcessOnPort(port); err != nil {
+		t.Logf("Warning: Failed to kill process on port %d: %v", port, err)
+	}
+
+	database := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().Port(port))
+	dsn := fmt.Sprintf("host=localhost port=%d user=postgres password=postgres dbname=postgres sslmode=disable", port)
+	err = database.Start()
+	if err != nil {
+		t.Fatalf("Failed to start embedded postgres: %v", err)
+	}
+	defer database.Stop()
+
+	var cfg ms_{{.ServiceName}}.{{.DomainNameCamel}}MicroserviceConfiguration
+	_, _, err = {{.DomainName}}MsConfiguration(dsn, redisAddress, "", ":{{.Port}}", ":{{.MetricsPort}}", &cfg)
+	assert.NoError(t, err)
+
+	goctx, cancel := context.WithCancel(context.Background())
+	ctx := di.NewContext(goctx, &cfg)
+
+	// Create the {{.DomainNameCamel}}Microservice using DI
+	// if nesting is needed use injection token (cfg will need fixing for the nesting as well)
+	ms, err := di.Create[*ms_{{.ServiceName}}.{{.DomainNameCamel}}Microservice](ctx)
+	assert.NoError(t, err)
+	assert.NotNil(t, ms)
+
+	defer ms.PanicHandler()
+	microservice.StartAsync(ctx, ms)
+
+	// Wait a bit for the service to start up
+	time.Sleep(500 * time.Millisecond)
+
+	t.Run("Test{{.DomainNameCamel}}HealthEndpoint", func(t *testing.T) {
+		client := &http.Client{Timeout: 2 * time.Second}
+
+		// Test health endpoint
+		resp, err := client.Get("http://localhost:{{.Port}}/health")
+		if err == nil {
+			defer resp.Body.Close()
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+		}
+	})
+
+	// Set up a ticker to cancel the context after 10 seconds
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				cancel()
+				return
+			}
+		}
+	}()
+
+	<-ctx.Done()
+}

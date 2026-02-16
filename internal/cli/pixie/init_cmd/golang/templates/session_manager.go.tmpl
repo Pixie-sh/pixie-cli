@@ -1,0 +1,357 @@
+package session_manager
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/pixie-sh/core-go/infra/cache"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/models/serializer"
+	"github.com/pixie-sh/core-go/pkg/services"
+	"github.com/pixie-sh/core-go/pkg/types"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/errors-go"
+
+	"{{ .ModuleName }}/pkg/models/session_manager_models"
+)
+
+// Cache key templates
+const (
+	CacheUserSessionIDTemplate               = "session.session_id::%s"
+	CacheUserIDUserSessionIDTemplate         = "user.id:session.session_id::%d:%s"
+	CacheJWTEncodedUserSessionIDTemplate     = "session.session_id:jwt.encoded::%s"
+	CacheJWTSessionIDTemplate                = "jwt.session_id::%s"
+	CacheJWTTemplate                         = "jwt::%s"
+	CacheUserIDJWTSessionIDTemplate          = "user.id:jwt.session_id::%d:%s"
+	CacheJWTSessionIDUserSessionSessionIDTemplate = "jwt.session_id:session.session_id::%s:%s"
+	CacheJWTUserSessionTemplate              = "jwt:session::%s"
+)
+
+// SessionManagerConfiguration holds all session manager configuration
+type SessionManagerConfiguration struct {
+	JWTTokenServiceConfiguration
+}
+
+// SessionManager manages JWT tokens and sessions
+type SessionManager struct {
+	services.Service[SessionManager]
+	jwtService     *JWTTokenService
+	sessionService *SessionService
+	config         SessionManagerConfiguration
+	cache          cache.SetCache
+}
+
+// NewSessionManager creates a new session manager
+func NewSessionManager(ctx context.Context, config SessionManagerConfiguration, cache cache.SetCache) (SessionManager, error) {
+	is := SessionManager{
+		config: config,
+		cache:  cache,
+	}
+
+	sessionService := NewSessionService(ctx, config.SessionServiceConfiguration, cache)
+	tokenService, err := NewJWTTokenService(ctx, config.JWTTokenServiceConfiguration, cache)
+	if err != nil {
+		return is, err
+	}
+
+	is.sessionService = &sessionService
+	is.jwtService = tokenService
+	is.Service = services.NewService(&is, NewSessionManagerServiceFrom)
+	return is, nil
+}
+
+// NewSessionManagerWithServices creates a new session manager with existing services
+func NewSessionManagerWithServices(ctx context.Context, config SessionManagerConfiguration, cache cache.SetCache, sessionService *SessionService, tokenService *JWTTokenService) (SessionManager, error) {
+	is := SessionManager{
+		config: config,
+		cache:  cache,
+	}
+
+	is.sessionService = sessionService
+	is.jwtService = tokenService
+	is.Service = services.NewService(&is, NewSessionManagerServiceFrom)
+	return is, nil
+}
+
+// NewSessionManagerServiceFrom creates a new session manager from an existing service
+func NewSessionManagerServiceFrom(service services.Service[SessionManager]) (*SessionManager, *services.Service[SessionManager]) {
+	us := &SessionManager{}
+	us.config = service.Instance.config
+	us.cache = service.Instance.cache
+	us.sessionService = service.Instance.sessionService
+	us.jwtService = service.Instance.jwtService
+	us.Service = services.NewService(us, nil)
+
+	return us, &us.Service
+}
+
+func (s SessionManager) saveJWT(ctx context.Context, jwtObject session_manager_models.JWT) error {
+	tokenBytes, err := serializer.Serialize(jwtObject)
+	if err != nil {
+		return err
+	}
+
+	tokenTTL := s.ttl()
+	return s.cache.BatchSetEX(ctx, s.jwtService.batchModelsJwt(jwtObject.EncodedJWT, tokenBytes, jwtObject, tokenTTL))
+}
+
+func (s SessionManager) saveSession(ctx context.Context, session session_manager_models.UntypedSession) (session_manager_models.UntypedSession, error) {
+	sessionTTL := s.ttl()
+	return s.saveSessionWithTTL(ctx, session, sessionTTL)
+}
+
+func (s SessionManager) saveSessionWithTTL(ctx context.Context, session session_manager_models.UntypedSession, ttl time.Duration) (session_manager_models.UntypedSession, error) {
+	session.UpdatedAt = time.Now().UTC()
+	blob, err := serializer.Serialize(session)
+	if err != nil {
+		return session, err
+	}
+
+	if types.IsEmpty(ttl) {
+		ttl = s.ttl()
+	}
+
+	batch := s.sessionService.batchModelsSession(blob, session, ttl)
+	jwtEncoded, err := s.cache.Get(ctx, fmt.Sprintf(CacheJWTEncodedUserSessionIDTemplate, session.SessionID))
+	if err == nil {
+		batch = append(batch, cache.BatchSetExModel{
+			Key:      fmt.Sprintf(CacheJWTEncodedUserSessionIDTemplate, session.SessionID),
+			Value:    jwtEncoded,
+			Duration: &ttl,
+		})
+	}
+
+	return session, s.cache.BatchSetEX(ctx, batch)
+}
+
+// GetSessionByID retrieves a session by its ID
+func (s SessionManager) GetSessionByID(ctx context.Context, sessionID uid.UID) (session_manager_models.UntypedSession, error) {
+	session, err := s.sessionService.FetchFromCacheByID(ctx, sessionID)
+	if err != nil {
+		return session, err
+	}
+
+	return session, nil
+}
+
+func (s SessionManager) ttl() time.Duration {
+	return time.Duration(s.config.ValidityInSecondsToken) * time.Second
+}
+
+func (s SessionManager) save(ctx context.Context, jwt session_manager_models.JWT, session session_manager_models.UntypedSession) error {
+	tokenBytes, err := serializer.Serialize(jwt)
+	if err != nil {
+		return errors.NewWithError(err, "failed to serialize jwt")
+	}
+
+	sessionBytes, err := serializer.Serialize(session)
+	if err != nil {
+		return errors.NewWithError(err, "failed to serialize session")
+	}
+
+	ttl := s.ttl()
+	return s.cache.BatchSetEX(ctx, append(
+		s.batchModelsRelationJwtSession(jwt.SessionID, jwt.EncodedJWT, session.SessionID, sessionBytes, ttl),
+		append(
+			s.jwtService.batchModelsJwt(jwt.EncodedJWT, tokenBytes, jwt, ttl),
+			s.sessionService.batchModelsSession(sessionBytes, session, ttl)...,
+		)...,
+	))
+}
+
+func (s SessionManager) batchModelsRelationJwtSession(jwtID string, jwtEncoded string, sessionID uid.UID, sessionBytes []byte, ttl time.Duration) []cache.BatchSetExModel {
+	return []cache.BatchSetExModel{
+		{
+			Key:      fmt.Sprintf(CacheJWTUserSessionTemplate, jwtEncoded),
+			Value:    sessionBytes,
+			Duration: &ttl,
+		},
+		{
+			Key:      fmt.Sprintf(CacheJWTSessionIDUserSessionSessionIDTemplate, jwtID, sessionID),
+			Value:    sessionBytes,
+			Duration: &ttl,
+		},
+		{
+			Key:      fmt.Sprintf(CacheJWTEncodedUserSessionIDTemplate, sessionID),
+			Value:    types.UnsafeBytes(jwtEncoded),
+			Duration: &ttl,
+		},
+	}
+}
+
+// Refresh refreshes the TTL for JWT and session in cache
+func (s SessionManager) Refresh(ctx context.Context, jwtToRefresh string) error {
+	var token session_manager_models.JWT
+	var session session_manager_models.UntypedSession
+	var err error
+
+	token, err = s.jwtService.FetchFromCacheByJWT(ctx, jwtToRefresh)
+	if err != nil {
+		return err
+	}
+
+	session, err = s.sessionService.FetchFromCacheByJWT(ctx, jwtToRefresh)
+	if err != nil {
+		return err
+	}
+
+	return s.save(ctx, token, session)
+}
+
+// Delete removes JWT and session from cache
+func (s SessionManager) Delete(ctx context.Context, jwtEncoded string, jwt session_manager_models.JWT, session session_manager_models.UntypedSession) error {
+	err := s.jwtService.delete(ctx, jwtEncoded, jwt.User.ID, jwt.SessionID)
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).With("error", err).Error("unable to delete jwt token")
+	}
+
+	err = s.sessionService.delete(ctx, jwt.User.ID, session.SessionID)
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).With("error", err).Error("unable to delete jwt token")
+	}
+
+	err = s.cache.Delete(ctx, fmt.Sprintf(CacheJWTUserSessionTemplate, jwtEncoded))
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).With("error", err).Error("unable to delete relation from jwt token")
+	}
+
+	err = s.cache.Delete(ctx, fmt.Sprintf(CacheJWTSessionIDUserSessionSessionIDTemplate, jwt.SessionID, session.SessionID.String()))
+	if err != nil {
+		pixiecontext.GetCtxLogger(ctx).With("error", err).Error("unable to delete relation for session id token")
+	}
+
+	return nil
+}
+
+// GetJWTTokenBySessionID retrieves JWT token by session ID
+// Deprecated: needs to be reviewed
+func (s SessionManager) GetJWTTokenBySessionID(ctx context.Context, id string) (session_manager_models.JWT, string, error) {
+	return s.jwtService.GetJWTTokenBySessionID(ctx, id)
+}
+
+// GetJWTSessionsByUserID retrieves all JWT sessions for a user
+// Deprecated: needs to be reviewed
+func (s SessionManager) GetJWTSessionsByUserID(ctx context.Context, id uid.UID) (struct {
+	UserID       uint64                               `json:"user_id"`
+	SessionIDs   []string                             `json:"session_ids"`
+	SessionsData []session_manager_models.JWT `json:"session_data"`
+}, error) {
+	return s.jwtService.GetJWTByUserID(ctx, id)
+}
+
+// GetJWTService returns the JWT service
+func (s SessionManager) GetJWTService() *JWTTokenService {
+	return s.jwtService
+}
+
+// GetSessionService returns the session service
+func (s SessionManager) GetSessionService() *SessionService {
+	return s.sessionService
+}
+
+// Save saves JWT and session to cache
+func Save(ctx context.Context, jwt session_manager_models.JWT, session session_manager_models.UntypedSession, customSessionManager ...*SessionManager) error {
+	manager := GetManager(customSessionManager...)
+	return manager.save(ctx, jwt, session)
+}
+
+// UpsertSession upserts a session in cache with the expected remaining TTL
+func UpsertSession(ctx context.Context, session session_manager_models.UntypedSession, customManager ...*SessionManager) (session_manager_models.UntypedSession, error) {
+	manager := GetManager(customManager...)
+	remainingTTL, err := manager.sessionService.ExpiresIn(ctx, session.SessionID)
+	if err != nil {
+		return session, err
+	}
+
+	return UpsertSessionWithTTL(ctx, session, remainingTTL, manager)
+}
+
+// UpsertSessionWithTTL upserts a session in cache with the provided TTL
+func UpsertSessionWithTTL(ctx context.Context, session session_manager_models.UntypedSession, ttl time.Duration, customManager ...*SessionManager) (session_manager_models.UntypedSession, error) {
+	manager := GetManager(customManager...)
+
+	if types.IsEmpty(ttl) {
+		ttl = manager.ttl()
+	}
+
+	return manager.saveSessionWithTTL(ctx, session, ttl)
+}
+
+// FetchFromCache retrieves JWT and session from cache
+func FetchFromCache(ctx context.Context, jwtEncoded string, customManager ...*SessionManager) (session_manager_models.JWT, session_manager_models.UntypedSession, error) {
+	manager := GetManager(customManager...)
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	var jwt session_manager_models.JWT
+	var session session_manager_models.UntypedSession
+	var err error
+
+	jwt, err = manager.jwtService.FetchFromCacheByJWT(ctx, jwtEncoded)
+	if err != nil {
+		return jwt, session, err
+	}
+
+	session, err = manager.sessionService.FetchFromCacheByJWT(ctx, jwtEncoded)
+	if err != nil {
+		log.
+			With("error", err).
+			Error("unable to fetch session from cache. creating new session and affecting cache")
+
+		jwt, session, err = createFromJWTAndSave(ctx, manager, jwt)
+		if err != nil {
+			log.
+				With("error", err).
+				Error("unable to save freshly created session. going away.")
+
+			return jwt, session, err
+		}
+	}
+
+	return jwt, session, nil
+}
+
+// ExistsInCache checks if JWT exists in cache
+func ExistsInCache(ctx context.Context, jwtEncoded string, customManager ...*SessionManager) bool {
+	manager := GetManager(customManager...)
+
+	jwtExists := manager.jwtService.ExistsInCacheByJWT(ctx, jwtEncoded)
+	sessionExists := manager.sessionService.ExistsInCacheByJWT(ctx, jwtEncoded)
+	if jwtExists && !sessionExists {
+		jwtObj, err := manager.jwtService.FetchFromCacheByJWT(ctx, jwtEncoded)
+		if err != nil {
+			pixiecontext.GetCtxLogger(ctx).
+				With("error", err).
+				Error("unable to fetch jwt token to create a new session")
+
+			return false
+		}
+
+		_, _, err = createFromJWTAndSave(ctx, manager, jwtObj)
+		if err != nil {
+			pixiecontext.GetCtxLogger(ctx).
+				With("error", err).
+				Error("unable to save session")
+
+			return false
+		}
+	}
+
+	return jwtExists
+}
+
+func createFromJWTAndSave(ctx context.Context, manager *SessionManager, jwtObj session_manager_models.JWT) (session_manager_models.JWT, session_manager_models.UntypedSession, error) {
+	var session session_manager_models.UntypedSession
+
+	// Check for superadmin role
+	if slices.Contains(jwtObj.Features, session_manager_models.SuperadminRoleFeature) {
+		session = GenerateAdminSessionFromJWT(ctx, jwtObj).UntypedSession
+	} else {
+		// Default to user session
+		session = GenerateUserSessionFromJWT(ctx, jwtObj).UntypedSession
+	}
+
+	err := manager.save(ctx, jwtObj, session)
+	return jwtObj, session, err
+}

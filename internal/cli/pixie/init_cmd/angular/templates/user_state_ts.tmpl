@@ -1,0 +1,127 @@
+import { Injectable } from '@angular/core';
+import { State, Action, StateContext, Selector } from '@ngxs/store';
+import { tap, catchError } from 'rxjs/operators';
+import { of } from 'rxjs';
+import { UserApiService } from '@core/services/user-api.service';
+import { User } from '@core/models/user.model';
+import {
+  LoadUserProfile,
+  LoadUserProfileSuccess,
+  LoadUserProfileFailure,
+  UpdateUserProfile,
+  UpdateUserProfileSuccess,
+  UpdateUserProfileFailure,
+  ClearUserError
+} from './user.actions';
+
+export interface UserStateModel {
+  profile: User | null;
+  loading: boolean;
+  updating: boolean;
+  error: string | null;
+}
+
+const defaults: UserStateModel = {
+  profile: null,
+  loading: false,
+  updating: false,
+  error: null
+};
+
+@State<UserStateModel>({
+  name: 'user',
+  defaults
+})
+@Injectable()
+export class UserState {
+  constructor(private userApi: UserApiService) {}
+
+  @Selector()
+  static profile(state: UserStateModel): User | null {
+    return state.profile;
+  }
+
+  @Selector()
+  static loading(state: UserStateModel): boolean {
+    return state.loading;
+  }
+
+  @Selector()
+  static updating(state: UserStateModel): boolean {
+    return state.updating;
+  }
+
+  @Selector()
+  static error(state: UserStateModel): string | null {
+    return state.error;
+  }
+
+  @Action(LoadUserProfile)
+  loadProfile(ctx: StateContext<UserStateModel>) {
+    ctx.patchState({ loading: true, error: null });
+
+    return this.userApi.getProfile().pipe(
+      tap((response) => {
+        ctx.dispatch(new LoadUserProfileSuccess(response.data));
+      }),
+      catchError((error) => {
+        ctx.dispatch(new LoadUserProfileFailure(error.error?.message || 'Failed to load profile'));
+        return of(error);
+      })
+    );
+  }
+
+  @Action(LoadUserProfileSuccess)
+  loadProfileSuccess(ctx: StateContext<UserStateModel>, action: LoadUserProfileSuccess) {
+    ctx.patchState({
+      profile: action.user,
+      loading: false,
+      error: null
+    });
+  }
+
+  @Action(LoadUserProfileFailure)
+  loadProfileFailure(ctx: StateContext<UserStateModel>, action: LoadUserProfileFailure) {
+    ctx.patchState({
+      loading: false,
+      error: action.error
+    });
+  }
+
+  @Action(UpdateUserProfile)
+  updateProfile(ctx: StateContext<UserStateModel>, action: UpdateUserProfile) {
+    ctx.patchState({ updating: true, error: null });
+
+    return this.userApi.updateProfile(action.payload).pipe(
+      tap((response) => {
+        ctx.dispatch(new UpdateUserProfileSuccess(response.data));
+      }),
+      catchError((error) => {
+        ctx.dispatch(new UpdateUserProfileFailure(error.error?.message || 'Failed to update profile'));
+        return of(error);
+      })
+    );
+  }
+
+  @Action(UpdateUserProfileSuccess)
+  updateProfileSuccess(ctx: StateContext<UserStateModel>, action: UpdateUserProfileSuccess) {
+    ctx.patchState({
+      profile: action.user,
+      updating: false,
+      error: null
+    });
+  }
+
+  @Action(UpdateUserProfileFailure)
+  updateProfileFailure(ctx: StateContext<UserStateModel>, action: UpdateUserProfileFailure) {
+    ctx.patchState({
+      updating: false,
+      error: action.error
+    });
+  }
+
+  @Action(ClearUserError)
+  clearError(ctx: StateContext<UserStateModel>) {
+    ctx.patchState({ error: null });
+  }
+}

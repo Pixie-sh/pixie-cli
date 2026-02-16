@@ -1,0 +1,83 @@
+package notification_adapters
+
+import (
+	"github.com/pixie-sh/core-go/pkg/models/adapters"
+	"github.com/pixie-sh/core-go/pkg/models/database_models"
+	"github.com/pixie-sh/core-go/pkg/models/notification_models"
+	"github.com/pixie-sh/core-go/pkg/models/serializer"
+	"github.com/pixie-sh/core-go/pkg/types/slices"
+	"github.com/pixie-sh/errors-go"
+
+	"{{ .ModuleName }}/internal/domains/notifications/notifications_data_layer/notifications_entities"
+)
+
+var _ adapters.Adapter[notifications_entities.Action, notification_models.Action] = ActionAdapter{}
+
+// ActionAdapter adapts notification action entities to models
+type ActionAdapter struct{}
+
+// NewActionAdapter creates a new ActionAdapter
+func NewActionAdapter() ActionAdapter {
+	return ActionAdapter{}
+}
+
+// Adapt converts an Action entity to an Action model
+func (a ActionAdapter) Adapt(action notifications_entities.Action) notification_models.Action {
+	return notification_models.Action{
+		ID:                action.ID,
+		Name:              action.Name,
+		Language:          action.Language,
+		EventType:         action.EventType,
+		DeliveryMethod:    action.DeliveryMethod,
+		ActionStatus:      action.ActionStatus,
+		ActionPayload:     action.ActionPayload,
+		TemplateID:        action.TemplateID,
+		ConditionTemplate: action.ConditionTemplate,
+	}
+}
+
+// AdaptCollection converts a collection of Action entities to models
+func (a ActionAdapter) AdaptCollection(actions []notifications_entities.Action) []notification_models.Action {
+	return slices.Map(actions, a.Adapt)
+}
+
+// PayloadFromJSONB converts a JSONB payload to the appropriate delivery method payload type
+func (a ActionAdapter) PayloadFromJSONB(actionType notification_models.ActionDeliveryMethodEnum, payload database_models.JSONB) (any, error) {
+	switch actionType {
+	case notification_models.EmailActionDeliveryMethod:
+		var p notification_models.EmailDeliveryMethodPayload
+		if err := serializer.ToStruct(payload, &p, true); err != nil {
+			return nil, err
+		}
+
+		return p, nil
+	case notification_models.SMSActionDeliveryMethod:
+		var p notification_models.SMSDeliveryMethodPayload
+		if err := serializer.ToStruct(payload, &p, true); err != nil {
+			return nil, err
+		}
+
+		return p, nil
+	case notification_models.PUSHMobileActionDeliveryMethod:
+		var p notification_models.PUSHMobileDeliveryMethodPayload
+		if err := serializer.ToStruct(payload, &p, true); err != nil {
+			return nil, err
+		}
+
+		return p, nil
+	case notification_models.PUSHWebActionDeliveryMethod:
+		var p notification_models.PUSHWebDeliveryMethodPayload
+		if err := serializer.ToStruct(payload, &p, true); err != nil {
+			return nil, err
+		}
+
+		return p, nil
+	default:
+		return nil, errors.NewValidationError("unsupported action type", &errors.FieldError{
+			Field:   "action_type",
+			Rule:    "actionTypeNotSupported",
+			Param:   actionType.String(),
+			Message: "unsupported action type",
+		})
+	}
+}

@@ -1,0 +1,53 @@
+<nav class="navbar">
+  <div class="navbar-start">
+    <button *ngIf="showMenuButton" class="menu-button" (click)="onMenuClick()">
+      <i class="icon-menu"></i>
+    </button>
+    <a routerLink="/" class="navbar-brand">
+      <span class="brand-icon">{{ "{{" }} title.charAt(0).toUpperCase() {{ "}}" }}</span>
+      <span class="brand-text">{{ "{{" }} title {{ "}}" }}</span>
+    </a>
+  </div>
+
+  <div class="navbar-end">
+{{- if .Features.state }}
+    <ng-container *ngIf="isAuthenticated$ | async; else loginLink">
+      <div class="user-menu-container">
+        <button class="user-menu-trigger" (click)="toggleUserMenu()">
+          <div class="user-avatar" *ngIf="user$ | async as user">
+            {{ "{{" }} user.firstName?.charAt(0) {{ "}}" }}{{ "{{" }} user.lastName?.charAt(0) {{ "}}" }}
+          </div>
+          <i class="icon-chevron-down"></i>
+        </button>
+
+        <div class="user-menu" *ngIf="userMenuOpen" (clickOutside)="closeUserMenu()">
+          <div class="user-info" *ngIf="user$ | async as user">
+            <div class="user-name">{{ "{{" }} user.firstName {{ "}}" }} {{ "{{" }} user.lastName {{ "}}" }}</div>
+            <div class="user-email">{{ "{{" }} user.email {{ "}}" }}</div>
+          </div>
+          <div class="menu-divider"></div>
+          <a routerLink="/profile" class="menu-item" (click)="closeUserMenu()">
+            <i class="icon-user"></i>
+            Profile
+          </a>
+          <a routerLink="/settings" class="menu-item" (click)="closeUserMenu()">
+            <i class="icon-settings"></i>
+            Settings
+          </a>
+          <div class="menu-divider"></div>
+          <button class="menu-item text-error" (click)="logout()">
+            <i class="icon-log-out"></i>
+            Logout
+          </button>
+        </div>
+      </div>
+    </ng-container>
+
+    <ng-template #loginLink>
+      <a routerLink="/auth/sign-in" class="login-link">Sign In</a>
+    </ng-template>
+{{- else }}
+    <a routerLink="/auth/sign-in" class="login-link">Sign In</a>
+{{- end }}
+  </div>
+</nav>

@@ -1,0 +1,107 @@
+<div class="sign-up">
+  <div class="sign-up__header">
+    <h1>Create account</h1>
+    <p>Sign up to get started</p>
+  </div>
+
+  <form [formGroup]="form" (ngSubmit)="onSubmit()" class="sign-up__form">
+    @if (error) {
+      <div class="alert alert-danger" role="alert">
+        {{ "{{" }} error {{ "}}" }}
+      </div>
+    }
+
+    <div class="row mb-3">
+      <div class="col">
+        <label for="firstName" class="form-label">First name</label>
+        <input
+          type="text"
+          class="form-control"
+          id="firstName"
+          formControlName="firstName"
+          placeholder="First name"
+          [class.is-invalid]="form.get('firstName')?.invalid && form.get('firstName')?.touched"
+        />
+        @if (form.get('firstName')?.invalid && form.get('firstName')?.touched) {
+          <div class="invalid-feedback">First name is required</div>
+        }
+      </div>
+      <div class="col">
+        <label for="lastName" class="form-label">Last name</label>
+        <input
+          type="text"
+          class="form-control"
+          id="lastName"
+          formControlName="lastName"
+          placeholder="Last name"
+          [class.is-invalid]="form.get('lastName')?.invalid && form.get('lastName')?.touched"
+        />
+        @if (form.get('lastName')?.invalid && form.get('lastName')?.touched) {
+          <div class="invalid-feedback">Last name is required</div>
+        }
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label for="email" class="form-label">Email</label>
+      <input
+        type="email"
+        class="form-control"
+        id="email"
+        formControlName="email"
+        placeholder="Enter your email"
+        [class.is-invalid]="form.get('email')?.invalid && form.get('email')?.touched"
+      />
+      @if (form.get('email')?.invalid && form.get('email')?.touched) {
+        <div class="invalid-feedback">
+          @if (form.get('email')?.errors?.['required']) {
+            Email is required
+          } @else if (form.get('email')?.errors?.['email']) {
+            Please enter a valid email
+          }
+        </div>
+      }
+    </div>
+
+    <div class="mb-3">
+      <label for="password" class="form-label">Password</label>
+      <input
+        type="password"
+        class="form-control"
+        id="password"
+        formControlName="password"
+        placeholder="Create a password"
+        [class.is-invalid]="form.get('password')?.invalid && form.get('password')?.touched"
+      />
+      @if (form.get('password')?.invalid && form.get('password')?.touched) {
+        <div class="invalid-feedback">
+          @if (form.get('password')?.errors?.['required']) {
+            Password is required
+          } @else if (form.get('password')?.errors?.['minlength']) {
+            Password must be at least 6 characters
+          }
+        </div>
+      }
+    </div>
+
+    <button
+      type="submit"
+      class="btn btn-primary w-100"
+      [disabled]="isLoading"
+    >
+      @if (isLoading) {
+        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+        Creating account...
+      } @else {
+        Create account
+      }
+    </button>
+  </form>
+
+  <div class="sign-up__footer">
+    <p>
+      Already have an account?
+      <a routerLink="/auth/sign-in">Sign in</a>
+    </p>
+  </div>
+</div>

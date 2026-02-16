@@ -1,0 +1,160 @@
+package e2e_ms_{{.ServiceName}}_tests
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/pixie-sh/core-go/pkg/configuration"
+	"github.com/pixie-sh/logger-go/logger"
+
+	"{{.ModuleName}}/internal/ms/ms_{{.ServiceName}}"
+)
+
+func {{.DomainName}}MsConfiguration(
+	dsn string,
+	redisAddress string,
+	redisPassword string,
+	listenPort string,
+	metricsPort string,
+	{{.DomainName}}MicroserviceConfiguration *ms_{{.ServiceName}}.{{.DomainNameCamel}}MicroserviceConfiguration,
+) ([]byte, []byte, error) {
+
+	const cfgRaw = `{
+  "#ref": {
+    "database_orm": {
+      "driver": "gorm_db_driver",
+      "values": {
+        "driver": "psql_db_driver",
+        "dsn": "${env.DATABASE_DSN}"
+      }
+    },
+    "token_service": {
+      "validity_in_seconds_token": 5259492,
+      "token_private_key": "pvt_key",
+      "token_public_key": "pub_key"
+    },
+    "redis_address": "${env.REDIS_ADDRESS}",
+    "cors_origins": "${env.CORS_ORIGINS}",
+    "authorization_api_key": "${env.AUTH_KEY}"
+  },
+  "listen_addr": "${env.LISTEN_ADDR}",
+  "listen_metrics_addr": "${env.LISTEN_METRICS_ADDR}",
+  "authorization_gates_bundle": {
+    "jwt_header_key": "authorization",
+    "authorization_gate": {
+      "value": "${#ref.authorization_api_key}",
+      "header": "X-AuthKey"
+    }
+  },
+  "token_services_bundle": {
+    "token_service": "${#ref.token_service}",
+    "token_cache": {
+      "address": "${#ref.redis_address}",
+      "db": 7
+    }
+  },
+  "{{.DomainName}}_business_layer": {
+    "{{.DomainName}}_data_layer": {
+      "database_orm": "${#ref.database_orm}"
+    },
+    "{{.DomainName}}_service": {
+      "{{.DomainName}}_data_layer": {
+        "database_orm": "${#ref.database_orm}"
+      }
+    }
+  },
+  "http_server_bundle": {
+    "cors_configuration": {
+      "allow_origins": "${#ref.cors_origins}",
+      "allow_methods": "*",
+      "allow_headers": "Content-Type,X-Requested-With,Authorization",
+      "allow_credentials": false,
+      "expose_headers": "X-Request-ID,Recaptcha-Token",
+      "max_age": 0
+    }
+  }
+}`
+
+	os.Setenv("DATABASE_DSN", dsn)
+	os.Setenv("REDIS_ADDRESS", redisAddress)
+	os.Setenv("REDIS_PASSWORD", redisPassword)
+	os.Setenv("CORS_ORIGINS", "http://localhost:4200,http://localhost:4201")
+	os.Setenv("AUTH_KEY", "SuperString{{.DomainNameCamel}}ApiKey")
+	os.Setenv("LISTEN_ADDR", listenPort)
+	os.Setenv("LISTEN_METRICS_ADDR", metricsPort)
+
+	var expectedCfg = fmt.Sprintf(`{
+  "#ref" : {
+    "authorization_api_key" : "SuperString{{.DomainNameCamel}}ApiKey",
+    "cors_origins" : "http://localhost:4200,http://localhost:4201",
+    "database_orm" : {
+      "driver" : "gorm_db_driver",
+      "values" : {
+        "driver" : "psql_db_driver",
+        "dsn" : "%s"
+      }
+    },
+    "redis_address" : "%s",
+    "token_service" : {
+      "token_private_key" : "pvt_key",
+      "token_public_key" : "pub_key",
+      "validity_in_seconds_token" : 5259492
+    }
+  },
+  "authorization_gates_bundle" : {
+    "authorization_gate" : {
+      "header" : "X-AuthKey",
+      "value" : "SuperString{{.DomainNameCamel}}ApiKey"
+    },
+    "jwt_header_key" : "authorization"
+  },
+  "{{.DomainName}}_business_layer" : {
+    "{{.DomainName}}_data_layer" : {
+      "database_orm" : {
+        "driver" : "gorm_db_driver",
+        "values" : {
+          "driver" : "psql_db_driver",
+          "dsn" : "%s"
+        }
+      }
+    },
+    "{{.DomainName}}_service" : {
+      "{{.DomainName}}_data_layer" : {
+        "database_orm" : {
+          "driver" : "gorm_db_driver",
+          "values" : {
+            "driver" : "psql_db_driver",
+            "dsn" : "%s"
+          }
+        }
+      }
+    }
+  },
+  "http_server_bundle" : {
+    "cors_configuration" : {
+      "allow_credentials" : false,
+      "allow_headers" : "Content-Type,X-Requested-With,Authorization",
+      "allow_methods" : "*",
+      "allow_origins" : "http://localhost:4200,http://localhost:4201",
+      "expose_headers" : "X-Request-ID,Recaptcha-Token",
+      "max_age" : 0
+    }
+  },
+  "listen_addr" : "%s",
+  "listen_metrics_addr" : "%s",
+  "token_services_bundle" : {
+    "token_cache" : {
+      "address" : "%s",
+      "db" : 7
+    },
+    "token_service" : {
+      "token_private_key" : "pvt_key",
+      "token_public_key" : "pub_key",
+      "validity_in_seconds_token" : 5259492
+    }
+  }
+}`, dsn, redisAddress, dsn, dsn, listenPort, metricsPort, redisAddress)
+
+	parsed, err := configuration.StructFromJSONBytesWithEnvReplace([]byte(cfgRaw), &{{.DomainName}}MicroserviceConfiguration, logger.Logger)
+	return parsed, []byte(expectedCfg), err
+}

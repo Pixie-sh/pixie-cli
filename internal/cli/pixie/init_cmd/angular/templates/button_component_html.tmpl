@@ -1,0 +1,24 @@
+<button
+  [type]="type"
+  [class]="buttonClasses.join(' ')"
+  [disabled]="disabled || loading"
+  (click)="onClick($event)"
+>
+  <span *ngIf="loading" class="btn-spinner">
+    <svg class="spinner" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3" />
+    </svg>
+  </span>
+  
+  <span *ngIf="icon && iconPosition === 'left' && !loading" class="btn-icon">
+    <i [class]="icon"></i>
+  </span>
+  
+  <span class="btn-content">
+    <ng-content></ng-content>
+  </span>
+  
+  <span *ngIf="icon && iconPosition === 'right' && !loading" class="btn-icon">
+    <i [class]="icon"></i>
+  </span>
+</button>

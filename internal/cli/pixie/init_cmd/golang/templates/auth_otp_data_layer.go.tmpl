@@ -1,0 +1,57 @@
+package authentication_data_layer
+
+import (
+	"context"
+
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/layer"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"github.com/pixie-sh/di-go"
+
+	"{{ .ModuleName }}/bundles"
+	internaldi "{{ .ModuleName }}/infra/di"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_repositories"
+)
+
+type OtpDataLayerConfiguration struct {
+	DatabaseORMConfiguration bundles.DatabaseORMConfiguration `json:"database_orm"`
+}
+
+func (o OtpDataLayerConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(o, lookupPath)
+}
+
+type OtpDataLayer struct {
+	layer.GenericDataLayer
+
+	OTPRepository auth_repositories.OTPRepository
+}
+
+func NewOtpDataLayer(_ context.Context, orm *database.Orm) OtpDataLayer {
+	return OtpDataLayer{
+		GenericDataLayer: layer.NewGenericDataLayer(orm),
+		OTPRepository:    auth_repositories.NewOTPRepository(orm.DB),
+	}
+}
+
+func RegistryOtpDataLayerConfiguration(ctx di.Context, opts *di.RegistryOpts) (*OtpDataLayerConfiguration, error) {
+	return di.ConfigurationLookup[*OtpDataLayerConfiguration](ctx, opts)
+}
+
+func RegistryOtpDataLayer(ctx di.Context, opts *di.RegistryOpts) (*OtpDataLayer, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	_, err := di.CreateConfiguration[*OtpDataLayerConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	orm, err := di.Create[*bundles.DatabaseORM](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenDatabaseORM))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenDatabaseORM, internaldi.RegistryTokenOtpDataLayer)
+		return nil, err
+	}
+
+	otpDataLayer := NewOtpDataLayer(ctx, orm.Orm)
+	return &otpDataLayer, nil
+}

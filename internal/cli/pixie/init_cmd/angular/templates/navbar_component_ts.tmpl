@@ -1,0 +1,49 @@
+import { Component, Input, Output, EventEmitter } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { RouterLink, RouterLinkActive } from '@angular/router';
+{{- if .Features.state }}
+import { Store, Select } from '@ngxs/store';
+import { Observable } from 'rxjs';
+import { AuthState } from '@store/auth/auth.state';
+import { Logout } from '@store/auth/auth.actions';
+import { User } from '@core/models/user.model';
+{{- end }}
+
+@Component({
+  selector: '{{ .Prefix }}-navbar',
+  standalone: true,
+  imports: [CommonModule, RouterLink, RouterLinkActive],
+  templateUrl: './navbar.component.html',
+  styleUrls: ['./navbar.component.scss']
+})
+export class NavbarComponent {
+  @Input() title = '{{ .ProjectName }}';
+  @Input() showMenuButton = true;
+  
+  @Output() menuClicked = new EventEmitter<void>();
+  
+{{- if .Features.state }}
+  @Select(AuthState.user) user$!: Observable<User | null>;
+  @Select(AuthState.isAuthenticated) isAuthenticated$!: Observable<boolean>;
+
+  constructor(private store: Store) {}
+
+  logout(): void {
+    this.store.dispatch(new Logout());
+  }
+{{- end }}
+
+  userMenuOpen = false;
+
+  toggleUserMenu(): void {
+    this.userMenuOpen = !this.userMenuOpen;
+  }
+
+  closeUserMenu(): void {
+    this.userMenuOpen = false;
+  }
+
+  onMenuClick(): void {
+    this.menuClicked.emit();
+  }
+}

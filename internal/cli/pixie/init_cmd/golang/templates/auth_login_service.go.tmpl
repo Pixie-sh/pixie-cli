@@ -1,0 +1,373 @@
+package authentication_services
+
+import (
+	"context"
+	goErrors "errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/pixie-sh/core-go/infra/rate_limiter"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/errors/db_errors"
+	"github.com/pixie-sh/core-go/pkg/services"
+	"github.com/pixie-sh/core-go/pkg/types"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/core-go/pkg/utils"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/errors-go"
+	"github.com/pixie-sh/logger-go/logger"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
+
+	"{{ .ModuleName }}/bundles"
+	internaldi "{{ .ModuleName }}/infra/di"
+
+	data "{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_entities"
+	"{{ .ModuleName }}/pkg/models/session_manager_models"
+)
+
+type LoginServiceConfiguration struct {
+	AuthDataLayerConfiguration     data.AuthenticationDataLayerConfiguration `json:"auth_data_layer"`
+	RateLimiterBundleConfiguration bundles.RateLimiterBundleConfiguration    `json:"rate_limiter_bundle"`
+}
+
+func (l LoginServiceConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(l, lookupPath)
+}
+
+type LoginService struct {
+	services.Service[LoginService]
+
+	config      *LoginServiceConfiguration
+	dataLayer   *data.AuthenticationDataLayer
+	rateLimiter rate_limiter.IRateLimiter
+}
+
+func RegistryLoginServiceConfiguration(ctx di.Context, opts *di.RegistryOpts) (*LoginServiceConfiguration, error) {
+	return di.ConfigurationLookup[*LoginServiceConfiguration](ctx, opts)
+}
+
+func RegistryLoginService(ctx di.Context, opts *di.RegistryOpts) (*LoginService, error) {
+	cfg, err := di.CreateConfiguration[*LoginServiceConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	dataLayer, err := di.Create[*data.AuthenticationDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenAuthenticationDataLayer))
+	if err != nil {
+		return nil, err
+	}
+
+	rateLimiter, err := di.Create[*bundles.RateLimiterBundle](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryRateLimiterBundle))
+	if err != nil {
+		return nil, err
+	}
+
+	return NewLoginService(ctx, cfg, dataLayer, rateLimiter.RateLimiter)
+}
+
+func NewLoginService(
+	_ context.Context,
+	config *LoginServiceConfiguration,
+	dataLayer *data.AuthenticationDataLayer,
+	rateLimiter rate_limiter.IRateLimiter,
+) (*LoginService, error) {
+	ls := LoginService{
+		config:      config,
+		dataLayer:   dataLayer,
+		rateLimiter: rateLimiter,
+	}
+
+	ls.Service = services.NewService(&ls, NewLoginServiceFrom)
+	return &ls, nil
+}
+
+func NewLoginServiceFrom(service services.Service[LoginService]) (*LoginService, *services.Service[LoginService]) {
+	us := &LoginService{}
+	us.config = service.Instance.config
+	us.dataLayer = service.Instance.dataLayer
+	us.rateLimiter = service.Instance.rateLimiter
+	us.Service = services.NewService(us, nil)
+
+	return us, &us.Service
+}
+
+func (l LoginService) ValidateLoginWithEmail(ctx context.Context, channel session_manager_models.SessionChannel, email string, password string) (auth_entities.User, error) {
+	emailLowerCase := strings.ToLower(email)
+	log := logger.
+		With("channel", channel).
+		With("email", email)
+
+	rateLimiterUserKey := fmt.Sprintf("user:%s:failed_login", emailLowerCase)
+	if allowed, ttl := l.rateLimiter.Try(ctx, rateLimiterUserKey); !allowed {
+		err := errors.NewValidationError("too many failed login attempts. try again later", &errors.FieldError{
+			Rule:    "tooManyRequests",
+			Param:   utils.FormatDuration(ttl),
+			Message: "try again later",
+		}).WithErrorCode(errors.TooManyAttemptsErrorCode)
+
+		pixiecontext.GetCtxLogger(ctx).With("error", err).With("email", email).Error("too many login by email attempts")
+		return auth_entities.User{}, err
+	}
+
+	repo := l.dataLayer.UserRepository
+	if !l.TxNil() {
+		repo = l.dataLayer.UserRepository.WithTx(l.Tx)
+	}
+
+	user, err := repo.FindUserForLoginValidationByEmail(emailLowerCase)
+	if err != nil && !goErrors.Is(err, gorm.ErrRecordNotFound) {
+		if goErrors.Is(err, gorm.ErrRecordNotFound) {
+			return auth_entities.User{}, errors.New("invalid password or user not found", errors.FieldError{
+				Field:   "credentials",
+				Rule:    "invalid-credentials",
+				Message: "Incorrect password or user not found",
+			})
+		}
+
+		log.With("err", err).
+			Error("db error")
+		return auth_entities.User{}, db_errors.Handle(err)
+	}
+
+	err = l.validateLogin(ctx, log, rateLimiterUserKey, channel, user, password)
+	if err != nil {
+		return auth_entities.User{}, err
+	}
+
+	return user, nil
+}
+
+func (l LoginService) FindUserForLoginValidationByEmail(_ context.Context, email string) (auth_entities.User, error) {
+	emailLowerCase := strings.ToLower(email)
+	log := logger.
+		With("email", email)
+
+	repo := l.dataLayer.UserRepository
+	if !l.TxNil() {
+		repo = l.dataLayer.UserRepository.WithTx(l.Tx)
+	}
+
+	user, err := repo.FindUserForLoginValidationByEmail(emailLowerCase)
+	if err != nil && !goErrors.Is(err, gorm.ErrRecordNotFound) {
+		if goErrors.Is(err, gorm.ErrRecordNotFound) {
+			return auth_entities.User{}, errors.NewValidationError("invalid password or user not found", &errors.FieldError{
+				Field:   "credentials",
+				Rule:    "invalid-credentials",
+				Message: "Incorrect password or user not found",
+			})
+		}
+
+		log.With("err", err).
+			Error("db error")
+		return auth_entities.User{}, db_errors.Handle(err)
+	}
+
+	return user, nil
+}
+
+func (l LoginService) ValidatePasswordByUserID(ctx context.Context, userID uid.UID, password string) (auth_entities.User, error) {
+	log := logger.
+		With("userID", userID)
+
+	repo := l.dataLayer.UserRepository
+	if !l.TxNil() {
+		repo = l.dataLayer.UserRepository.WithTx(l.Tx)
+	}
+
+	user, err := repo.FindUserForLoginValidationByUserID(userID)
+	if err != nil {
+		log.With("err", err).
+			Error("db error")
+		return auth_entities.User{}, db_errors.Handle(err)
+	}
+
+	err = l.validateLoginWithoutRateLimiter(ctx, log, user, password)
+	if err != nil {
+		return auth_entities.User{}, err
+	}
+
+	return user, nil
+}
+
+func (l LoginService) validateUserStatus(channel session_manager_models.SessionChannel, user auth_entities.User) error {
+
+	switch channel {
+	case session_manager_models.MobileAppSessionChannel:
+		if err := l.userCanProceed(user); err != nil {
+			return err
+		}
+	case session_manager_models.WebAppSessionChannel:
+		if err := l.userCanProceed(user); err != nil {
+			return err
+		}
+	case session_manager_models.BackOfficeSessionChannel:
+		if err := l.boCanProceed(user); err != nil {
+			return err
+		}
+	default:
+		return errors.New("channel not supported").WithErrorCode(errors.SessionChannelNotSupportedErrorCode)
+	}
+
+	return nil
+}
+
+func (l LoginService) boCanProceed(user auth_entities.User) error {
+	if user.UserType != auth_entities.SuperAdminUserType || user.Status != "Active" {
+		return errors.New("bo user is not active").WithErrorCode(errors.UserNotActiveErrorCode)
+	}
+	return nil
+}
+
+func (l LoginService) userCanProceed(user auth_entities.User) error {
+	if user.Status != "Active" {
+		return errors.New("user is not active").WithErrorCode(errors.UserNotActiveErrorCode)
+	}
+	return nil
+}
+
+func (l LoginService) passwordsMatch(hash string, plainPassword string) error {
+	return bcrypt.CompareHashAndPassword(types.UnsafeBytes(hash), types.UnsafeBytes(plainPassword))
+}
+
+func (l LoginService) FindUserByEmail(email string) (auth_entities.User, error) {
+	emailLowerCase := strings.ToLower(email)
+
+	repo := l.dataLayer.UserRepository
+	if !l.TxNil() {
+		repo = l.dataLayer.UserRepository.WithTx(l.Tx)
+	}
+
+	user, err := repo.FindUserByEmail(emailLowerCase)
+	if err != nil {
+		logger.
+			With("email", email).
+			With("err", err).
+			Error("db error")
+		return auth_entities.User{}, db_errors.Handle(err)
+	}
+
+	return user, nil
+}
+
+func (l LoginService) FindUserByID(userID uid.UID) (auth_entities.User, error) {
+
+	repo := l.dataLayer.UserRepository
+	if !l.TxNil() {
+		repo = l.dataLayer.UserRepository.WithTx(l.Tx)
+	}
+
+	user, err := repo.FindUserByID(userID)
+	if err != nil {
+		logger.
+			With("id", userID.String()).
+			With("err", err).
+			Error("db error")
+		return auth_entities.User{}, db_errors.Handle(err)
+	}
+
+	return user, nil
+}
+
+func (l LoginService) FindUserEntitiesByUserID(_ context.Context, userID uid.UID) ([]session_manager_models.JWTEntity, auth_entities.UserTypeEnum, error) {
+	var entities []session_manager_models.JWTEntity
+	var txUserRepo = l.dataLayer.UserRepository.WithTx(l.Tx)
+
+	userType, status, err := txUserRepo.FindUserTypeByID(userID)
+	if err != nil {
+		return nil, auth_entities.UserType, db_errors.Handle(err)
+	}
+
+	if userType == auth_entities.SuperAdminUserType {
+		entities = append(entities, session_manager_models.JWTEntity{
+			EntityType: session_manager_models.SuperadminRoleFeature,
+			EntityID:   userID.String(),
+			Status:     status,
+		})
+	}
+
+	entities = append(entities, session_manager_models.JWTEntity{
+		EntityType: types.PayloadTypeOf[auth_entities.User]().String(),
+		EntityID:   userID.String(),
+		Status:     status,
+	})
+
+	return entities, userType, nil
+}
+
+func (l LoginService) validateLogin(ctx context.Context, log logger.Interface, rateLimiterUserKey string, channel session_manager_models.SessionChannel, user auth_entities.User, password string) error {
+	// Object doesn't have .empty() password is never empty so we can use it to check this
+	if len(user.Password) == 0 {
+		log.Warn("user not found")
+		return errors.New("invalid password or user not found", errors.FieldError{
+			Field:   "credentials",
+			Rule:    "invalid-credentials",
+			Message: "Incorrect password or user not found",
+		})
+	}
+
+	err := l.passwordsMatch(user.Password, password)
+	if err != nil {
+		currCount, rlErr := l.rateLimiter.Increment(ctx, rateLimiterUserKey)
+		log.With("err", err).
+			With("rate_limiter.error", rlErr).
+			With("rate_limiter.current_count", currCount).
+			Warn("passwords don't match")
+
+		return errors.New("invalid password or user not found", errors.FieldError{
+			Field:   "credentials",
+			Rule:    "invalid-credentials",
+			Message: "Incorrect password or user not found",
+		})
+	}
+
+	err = l.validateUserStatus(channel, user)
+	if err != nil {
+		log.With("err", err).
+			Warn("user not active")
+		return err
+	}
+
+	return nil
+}
+
+func (l LoginService) validateLoginWithoutRateLimiter(_ context.Context, log logger.Interface, user auth_entities.User, password string) error {
+	if len(user.Password) == 0 {
+		log.Warn("user not found")
+
+		return errors.NewValidationError("invalid password or user not found", &errors.FieldError{
+			Field:   "credentials",
+			Rule:    "invalid-credentials",
+			Message: "Incorrect password or user not found",
+		})
+	}
+
+	err := l.passwordsMatch(user.Password, password)
+	if err != nil {
+		log.With("err", err).
+			Warn("passwords don't match")
+
+		return errors.NewValidationError("invalid password or user not found", &errors.FieldError{
+			Field:   "credentials",
+			Rule:    "invalid-credentials",
+			Message: "Incorrect password or user not found",
+		})
+	}
+
+	return nil
+}
+
+func (l LoginService) UpdateLastLoginInfo(ctx context.Context, userID uid.UID, ip string) error {
+	return l.dataLayer.UserRepository.UpdateLastLoginInfo(userID, ip, time.Now())
+}
+
+func (l LoginService) UpdateUserFieldsByID(_ context.Context, userID uid.UID, fieldName string, fieldValue any) error {
+	repo := l.dataLayer.UserRepository
+	if !l.TxNil() {
+		repo = l.dataLayer.UserRepository.WithTx(l.Tx)
+	}
+
+	return repo.Model(auth_entities.User{}).Where("id = ?", userID).Update(fieldName, fieldValue).Error
+}

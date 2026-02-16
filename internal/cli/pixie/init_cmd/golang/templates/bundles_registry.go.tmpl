@@ -1,0 +1,41 @@
+package bundles
+
+import (
+	"sync"
+
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/errors-go"
+
+	internaldi "{{.ModuleName}}/infra/di"
+)
+
+var once sync.Once
+
+// Registry registers all bundles with the DI container
+func Registry() {
+	once.Do(func() {
+		// Database ORM
+		errors.Must(di.RegisterConfiguration[*DatabaseORMConfiguration](RegistryDatabaseORMConfiguration, di.WithToken(internaldi.RegistryTokenDatabaseORM)))
+		errors.Must(di.Register[*DatabaseORM](RegistryDatabaseORM, di.WithToken(internaldi.RegistryTokenDatabaseORM)))
+
+		// HTTP Server
+		errors.Must(di.RegisterConfiguration[*http.ServerConfiguration](RegistryHTTPServerConfiguration, di.WithToken(internaldi.RegistryTokenHTTPServer)))
+		errors.Must(di.Register[*http.Server](RegistryHTTPServer, di.WithToken(internaldi.RegistryTokenHTTPServer)))
+
+		errors.Must(di.RegisterConfiguration[*http.ServerConfiguration](RegistryHTTPServerConfiguration, di.WithToken(internaldi.RegistryTokenMetricsHTTPServer)))
+		errors.Must(di.Register[*http.Server](RegistryHTTPServer, di.WithToken(internaldi.RegistryTokenMetricsHTTPServer)))
+
+		errors.Must(di.RegisterConfiguration[*HttpServerBundleConfigurations](RegistryHTTPServerBundleConfiguration, di.WithToken(internaldi.RegistryTokenHTTPServerBundle)))
+		errors.Must(di.Register[*HttpServerBundle](RegistryHTTPServerBundle, di.WithToken(internaldi.RegistryTokenHTTPServerBundle)))
+{{if .Features.auth}}
+		// Token Services
+		errors.Must(di.RegisterConfiguration[*TokenServicesBundleConfiguration](RegistryTokenServicesBundleConfiguration, di.WithToken(internaldi.RegistryTokenTokenServicesBundle)))
+		errors.Must(di.Register[*TokenServicesBundle](RegistryTokenServicesBundle, di.WithToken(internaldi.RegistryTokenTokenServicesBundle)))
+
+		// Authorization Gates
+		errors.Must(di.RegisterConfiguration[*AuthorizationGatesBundleConfiguration](RegistryAuthorizationGatesBundleConfiguration, di.WithToken(internaldi.RegistryTokenAuthorizationGatesBundle)))
+		errors.Must(di.Register[*AuthorizationGatesBundle](RegistryAuthorizationGatesBundle, di.WithToken(internaldi.RegistryTokenAuthorizationGatesBundle)))
+{{end}}
+	})
+}

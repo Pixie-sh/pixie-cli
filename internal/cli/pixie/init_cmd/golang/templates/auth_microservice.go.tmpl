@@ -1,0 +1,189 @@
+package ms_authentication
+
+import (
+	"context"
+
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+	"github.com/pixie-sh/core-go/pkg/metrics"
+	"github.com/pixie-sh/core-go/pkg/microservice"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/logger-go/logger"
+
+	"{{.ModuleName}}/bundles"
+	internaldi "{{.ModuleName}}/infra/di"
+	"{{.ModuleName}}/infra/message_packs"
+	"{{.ModuleName}}/internal/domains/authentication/authentication_business_layer"
+)
+
+// compiler trick: force to comply with interfaces
+var _ microservice.Starter = &AuthenticationMicroservice{}
+var _ di.Configuration = &AuthenticationMicroserviceConfiguration{}
+
+type AuthenticationMicroserviceConfiguration struct {
+	bundles.TokenServicesBundleConfiguration                               `json:"token_services_bundle"`
+	bundles.AuthorizationGatesBundleConfiguration                          `json:"authorization_gates_bundle"`
+	bundles.HttpServerBundleConfigurations                                 `json:"http_server_bundle"`
+	authentication_business_layer.AuthenticationBusinessLayerConfiguration `json:"auth_business_layer"`
+	authentication_business_layer.PasswordBusinessLayerConfiguration       `json:"password_business_layer"`
+	authentication_business_layer.RegistrationBusinessLayerConfiguration   `json:"registration_business_layer"`
+	authentication_business_layer.UserProfileBusinessLayerConfiguration    `json:"user_profile_business_layer"`
+
+	ListenAddr        string `json:"listen_addr"`
+	ListenMetricsAddr string `json:"listen_metrics_addr"`
+}
+
+func (p *AuthenticationMicroserviceConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(p, lookupPath)
+}
+
+type AuthenticationMicroservice struct {
+	ctx context.Context
+
+	//from di
+	configuration        *AuthenticationMicroserviceConfiguration
+	server               http.Server
+	metricsServer        http.Server
+	businessLayer        *authentication_business_layer.AuthenticationBusinessLayer
+	passwordBusiness     *authentication_business_layer.PasswordBusinessLayer
+	registrationBusiness *authentication_business_layer.RegistrationBusinessLayer
+	userProfileBusiness  *authentication_business_layer.UserProfileBusinessLayer
+	gates                *bundles.AuthorizationGatesBundle
+
+	//non di
+	controllers   httpControllers
+	boControllers httpBoControllers
+}
+
+func RegistryAuthenticationMicroserviceConfiguration(dictx di.Context, opts *di.RegistryOpts) (*AuthenticationMicroserviceConfiguration, error) {
+	return di.ConfigurationLookup[*AuthenticationMicroserviceConfiguration](dictx, opts)
+}
+
+func RegistryAuthenticationMicroservice(ctx di.Context, opts *di.RegistryOpts) (*AuthenticationMicroservice, error) {
+	cfg, err := di.CreateConfiguration[*AuthenticationMicroserviceConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = di.Create[*bundles.TokenServicesBundle](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenTokenServicesBundle))
+	if err != nil {
+		return nil, err
+	}
+
+	serverBundle, err := di.Create[*bundles.HttpServerBundle](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenHTTPServerBundle))
+	if err != nil {
+		return nil, err
+	}
+
+	businessLayer, err := di.Create[*authentication_business_layer.AuthenticationBusinessLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenAuthenticationBusinessLayer))
+	if err != nil {
+		return nil, err
+	}
+
+	gates, err := di.Create[*bundles.AuthorizationGatesBundle](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenAuthorizationGatesBundle))
+	if err != nil {
+		return nil, err
+	}
+
+	passwordBusiness, err := di.Create[*authentication_business_layer.PasswordBusinessLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenPasswordBusinessLayer))
+	if err != nil {
+		return nil, err
+	}
+
+	registrationBusiness, err := di.Create[*authentication_business_layer.RegistrationBusinessLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenRegistrationBusinessLayer))
+	if err != nil {
+		return nil, err
+	}
+
+	userProfileBusiness, err := di.Create[*authentication_business_layer.UserProfileBusinessLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenUserProfileBusinessLayer))
+	if err != nil {
+		return nil, err
+	}
+
+	return NewAuthenticationMicroservice(
+		ctx,
+		cfg,
+		serverBundle,
+		businessLayer,
+		gates,
+		passwordBusiness,
+		registrationBusiness,
+		userProfileBusiness,
+	)
+}
+
+func NewAuthenticationMicroservice(
+	ctx context.Context,
+	cfg *AuthenticationMicroserviceConfiguration,
+	bundle *bundles.HttpServerBundle,
+	businessLayer *authentication_business_layer.AuthenticationBusinessLayer,
+	gates *bundles.AuthorizationGatesBundle,
+	passwordBusiness *authentication_business_layer.PasswordBusinessLayer,
+	registrationBusiness *authentication_business_layer.RegistrationBusinessLayer,
+	userProfileBusiness *authentication_business_layer.UserProfileBusinessLayer,
+) (*AuthenticationMicroservice, error) {
+	ms := &AuthenticationMicroservice{
+		ctx:                  ctx,
+		configuration:        cfg,
+		server:               bundle.Server,
+		metricsServer:        bundle.MetricsServer,
+		businessLayer:        businessLayer,
+		passwordBusiness:     passwordBusiness,
+		registrationBusiness: registrationBusiness,
+		userProfileBusiness:  userProfileBusiness,
+		gates:                gates,
+		controllers: httpControllers{
+			server:               bundle.Server,
+			gates:                gates,
+			businessLayer:        businessLayer,
+			passwordBusiness:     passwordBusiness,
+			registrationBusiness: registrationBusiness,
+			userProfileBusiness:  userProfileBusiness,
+		},
+		boControllers: httpBoControllers{
+			server:        bundle.Server,
+			gates:         gates,
+			businessLayer: businessLayer,
+		},
+	}
+
+	return ms, ms.Setup()
+}
+
+func (m *AuthenticationMicroservice) Setup() error {
+	err := m.Valid()
+	if err != nil {
+		return err
+	}
+
+	message_packs.Register(m.ctx)
+
+	err = m.controllers.SetupHTTP()
+	if err != nil {
+		return err
+	}
+
+	return m.boControllers.SetupHTTP()
+}
+
+func (m *AuthenticationMicroservice) PanicHandler() {
+	microservice.PanicHandler()
+}
+
+func (m *AuthenticationMicroservice) Defer() {
+	metrics.Defer(m.ctx)
+}
+
+func (m *AuthenticationMicroservice) Start() error {
+	go func() {
+		err := m.metricsServer.Listen(m.configuration.ListenMetricsAddr)
+		if err != nil {
+			logger.With("error", err).Error("unable to start metrics server")
+		}
+	}()
+
+	return m.server.Listen(m.configuration.ListenAddr)
+}
+
+func (m *AuthenticationMicroservice) Valid() error {
+	return nil
+}

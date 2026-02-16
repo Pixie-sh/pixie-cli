@@ -1,0 +1,22 @@
+package notifications_entities
+
+import (
+	"github.com/pixie-sh/core-go/pkg/models/database_models"
+	"github.com/pixie-sh/core-go/pkg/models/language_models"
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+// Template represents a notification template that can be used for emails, SMS, or push notifications
+type Template struct {
+	database_models.SoftDeletable
+
+	ID       uid.UID                      `gorm:"primaryKey;type:uuid"`
+	Name     string                       `gorm:"type:varchar(255);not null;uniqueIndex:idx_template_name_language;"`
+	Language language_models.LanguageEnum `gorm:"type:action_language_enum;uniqueIndex:idx_template_name_language;"`
+	Template []byte                       `gorm:"type:bytea;not null"`
+	Actions  []Action                     `gorm:"foreignKey:TemplateID"`
+}
+
+func (Template) TableName() string {
+	return "notification_templates"
+}

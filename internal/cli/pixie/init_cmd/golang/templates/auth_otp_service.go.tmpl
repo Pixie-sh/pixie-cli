@@ -1,0 +1,184 @@
+package authentication_services
+
+import (
+	"context"
+	"fmt"
+	"math/rand"
+	"time"
+
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/errors/db_errors"
+	"github.com/pixie-sh/core-go/pkg/services"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/errors-go"
+
+	internaldi "{{ .ModuleName }}/infra/di"
+	"{{ .ModuleName }}/infra/uidgen"
+	data "{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_entities"
+)
+
+type UserOtpServiceConfiguration struct {
+	OtpDataLayerConfiguration data.OtpDataLayerConfiguration `json:"otp_data_layer"`
+}
+
+func (u UserOtpServiceConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(u, lookupPath)
+}
+
+type UserOtpService struct {
+	services.Service[UserOtpService]
+
+	config    *UserOtpServiceConfiguration
+	dataLayer *data.OtpDataLayer
+}
+
+func RegistryUserOtpServiceConfiguration(ctx di.Context, opts *di.RegistryOpts) (*UserOtpServiceConfiguration, error) {
+	return di.ConfigurationLookup[*UserOtpServiceConfiguration](ctx, opts)
+}
+
+func RegistryUserOtpService(ctx di.Context, opts *di.RegistryOpts) (*UserOtpService, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	cfg, err := di.CreateConfiguration[*UserOtpServiceConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	otpDataLayer, err := di.Create[*data.OtpDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenOtpDataLayer))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenOtpDataLayer, internaldi.RegistryTokenUserOtpService)
+		return nil, err
+	}
+
+	return NewUserOtpService(ctx, cfg, otpDataLayer)
+}
+
+func NewUserOtpService(_ context.Context, config *UserOtpServiceConfiguration, dataLayer *data.OtpDataLayer) (*UserOtpService, error) {
+	uos := UserOtpService{}
+	uos.Service = services.NewService(&uos, NewUserOtpServiceFrom)
+	uos.config = config
+	uos.dataLayer = dataLayer
+
+	return &uos, nil
+}
+
+func NewUserOtpServiceFrom(service services.Service[UserOtpService]) (*UserOtpService, *services.Service[UserOtpService]) {
+	uos := &UserOtpService{}
+	uos.config = service.Instance.config
+	uos.dataLayer = service.Instance.dataLayer
+	uos.Service = services.NewService(uos, nil)
+
+	return uos, &uos.Service
+}
+
+// GenerateOTPCode generates a 6-digit random UserOTP code
+func (l UserOtpService) GenerateOTPCode() string {
+	// Use crypto/rand for better security in production
+	// For now, using math/rand with current time as seed
+	rand.Seed(time.Now().UnixNano())
+
+	// Generate 6 random digits (100000 to 999999)
+	otp := rand.Intn(900000) + 100000
+	return fmt.Sprintf("%06d", otp)
+}
+
+// CreateOTP creates a new OTP for the user and expires any existing pending OTPs
+func (l UserOtpService) CreateOTP(ctx context.Context, userID uid.UID, userEmail string) (*auth_entities.UserOTP, error) {
+	log := pixiecontext.GetCtxLogger(ctx).With("userID", userID).With("email", userEmail)
+	repo := l.dataLayer.OTPRepository.WithTx(l.Tx)
+
+	if err := repo.ExpireByUserID(userID); err != nil {
+		log.With("err", err).Error("failed to expire existing OTPs")
+		return nil, errors.Wrap(db_errors.Handle(err), "failed to expire existing OTPs", errors.APIValidationErrorCode)
+	}
+
+	otpCode := l.GenerateOTPCode()
+	now := time.Now().UTC()
+	otp := &auth_entities.UserOTP{
+		ID:           uidgen.OTP(),
+		UserID:       userID,
+		EmailAddress: userEmail,
+		OTPCode:      otpCode,
+		Status:       auth_entities.OTPStatusPending,
+		ExpiresAt:    now.Add(30 * time.Minute),
+	}
+	otp.CreatedAt = &now
+	otp.UpdatedAt = &now
+
+	if err := repo.Create(otp); err != nil {
+		log.With("err", err).Error("failed to create UserOTP record")
+		return nil, db_errors.Handle(err)
+	}
+
+	log.With("otpCode", otpCode).Debug("UserOTP generated successfully")
+	return otp, nil
+}
+
+// VerifyOTP verifies an OTP code for a user and marks it as used
+func (l UserOtpService) VerifyOTP(ctx context.Context, userID uid.UID, userEmail string, otpCode string) (*auth_entities.UserOTP, error) {
+	log := pixiecontext.GetCtxLogger(ctx).With("userID", userID)
+	repo := l.dataLayer.OTPRepository.WithTx(l.Tx)
+
+	if err := l.ExpireOldOTPs(ctx, 30*time.Minute); err != nil {
+		log.With("err", err).Error("failed to expire old OTPs")
+		return nil, db_errors.Handle(err)
+	}
+
+	otpRecord, err := repo.FindPendingByEmailAndCode(userID, userEmail, otpCode)
+	if err != nil {
+		if db_errors.Has(err, errors.EntityNotFoundErrorCode) {
+			log.Debug("UserOTP not found or already used/expired")
+			return nil, errors.NewValidationError("Validation failed.", &errors.FieldError{
+				Field:   "otp",
+				Rule:    "invalid",
+				Message: "Invalid or expired code",
+			})
+		}
+
+		log.With("err", err).Error("failed to find UserOTP record")
+		return nil, db_errors.Handle(err)
+	}
+
+	if otpRecord.IsExpired() {
+		log.Debug("UserOTP is expired, mark it on db and return error")
+		_ = repo.UpdateStatus(otpRecord.ID, auth_entities.OTPStatusExpired)
+		return nil, errors.NewValidationError("Validation failed.", &errors.FieldError{
+			Field:   "otp",
+			Rule:    "expired",
+			Message: "Code has expired",
+		})
+	}
+
+	// Check if the UserOTP belongs to the correct user
+	if otpRecord.UserID != userID {
+		log.With("otpUserID", otpRecord.UserID).Error("UserOTP user ID mismatch")
+		return nil, errors.NewValidationError("Validation failed.", &errors.FieldError{
+			Field:   "otp",
+			Rule:    "invalid",
+			Message: "Invalid or expired code",
+		})
+	}
+
+	// Mark OTP as used
+	if err := repo.UpdateStatus(otpRecord.ID, auth_entities.OTPStatusUsed); err != nil {
+		log.With("err", err).Error("failed to mark UserOTP as used")
+		return nil, db_errors.Handle(err)
+	}
+
+	log.Debug("UserOTP verified successfully")
+	return &otpRecord, nil
+}
+
+// ExpireOldOTPs expires all OTPs older than the specified duration
+func (l UserOtpService) ExpireOldOTPs(_ context.Context, olderThan time.Duration) error {
+	repo := l.dataLayer.OTPRepository.WithTx(l.Tx)
+	return repo.ExpireOldOTPs(olderThan)
+}
+
+// GetPendingOTPsByEmail retrieves all pending OTPs for an email address
+func (l UserOtpService) GetPendingOTPsByEmail(_ context.Context, emailAddress string) ([]auth_entities.UserOTP, error) {
+	repo := l.dataLayer.OTPRepository.WithTx(l.Tx)
+	return repo.FindPendingByEmail(emailAddress)
+}

@@ -1,0 +1,36 @@
+import { inject, Injectable } from '@angular/core';
+import { Observable } from 'rxjs';
+import { ApiService } from './api.service';
+import { API_ENDPOINTS } from '@core/constants/api.constants';
+import { User } from '@models/user.model';
+
+@Injectable({
+  providedIn: 'root',
+})
+export class UserApiService {
+  private readonly api = inject(ApiService);
+
+  /**
+   * Get current user profile
+   */
+  getProfile(): Observable<User> {
+    return this.api.get<User>(API_ENDPOINTS.USER.PROFILE);
+  }
+
+  /**
+   * Update user profile
+   */
+  updateProfile(data: Partial<User>): Observable<User> {
+    return this.api.patch<User>(API_ENDPOINTS.USER.PROFILE, data);
+  }
+
+  /**
+   * Change user password
+   */
+  changePassword(currentPassword: string, newPassword: string): Observable<void> {
+    return this.api.post<void>(API_ENDPOINTS.USER.CHANGE_PASSWORD, {
+      currentPassword,
+      newPassword,
+    });
+  }
+}

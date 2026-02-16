@@ -1,0 +1,70 @@
+import { Injectable } from '@angular/core';
+import { BehaviorSubject, Observable } from 'rxjs';
+
+export type ToastType = 'success' | 'error' | 'warning' | 'info';
+
+export interface Toast {
+  id: string;
+  type: ToastType;
+  message: string;
+  title?: string;
+  duration?: number;
+  dismissible?: boolean;
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class ToastService {
+  private toasts$ = new BehaviorSubject<Toast[]>([]);
+  private defaultDuration = 5000;
+
+  getToasts(): Observable<Toast[]> {
+    return this.toasts$.asObservable();
+  }
+
+  success(message: string, title?: string, duration?: number): void {
+    this.show({ type: 'success', message, title, duration });
+  }
+
+  error(message: string, title?: string, duration?: number): void {
+    this.show({ type: 'error', message, title, duration });
+  }
+
+  warning(message: string, title?: string, duration?: number): void {
+    this.show({ type: 'warning', message, title, duration });
+  }
+
+  info(message: string, title?: string, duration?: number): void {
+    this.show({ type: 'info', message, title, duration });
+  }
+
+  show(config: Omit<Toast, 'id'>): void {
+    const toast: Toast = {
+      id: this.generateId(),
+      type: config.type,
+      message: config.message,
+      title: config.title,
+      duration: config.duration ?? this.defaultDuration,
+      dismissible: config.dismissible ?? true
+    };
+
+    this.toasts$.next([...this.toasts$.value, toast]);
+
+    if (toast.duration && toast.duration > 0) {
+      setTimeout(() => this.dismiss(toast.id), toast.duration);
+    }
+  }
+
+  dismiss(id: string): void {
+    this.toasts$.next(this.toasts$.value.filter(t => t.id !== id));
+  }
+
+  clear(): void {
+    this.toasts$.next([]);
+  }
+
+  private generateId(): string {
+    return `toast-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  }
+}

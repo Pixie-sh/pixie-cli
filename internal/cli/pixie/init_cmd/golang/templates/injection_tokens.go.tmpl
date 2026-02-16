@@ -1,0 +1,74 @@
+package di
+
+import pdi "github.com/pixie-sh/di-go"
+
+// global bundles
+var (
+	RegistryTokenMetricsBundle            = pdi.RegisterInjectionToken("metrics_bundle")
+	RegistryTokenDatabaseORM              = pdi.RegisterInjectionToken("database_orm")
+	RegistryTokenHTTPServer               = pdi.RegisterInjectionToken("http_server")
+	RegistryTokenMetricsHTTPServer        = pdi.RegisterInjectionToken("metrics_http_server")
+	RegistryTokenHTTPServerBundle         = pdi.RegisterInjectionToken("http_server_bundle")
+	RegistryTokenAuthorizationGatesBundle = pdi.RegisterInjectionToken("authorization_gates_bundle")
+	RegistryTokenTokenServicesBundle      = pdi.RegisterInjectionToken("token_services_bundle")
+	RegistryRateLimiterBundle             = pdi.RegisterInjectionToken("rate_limiter_bundle")
+	RegistrySQSProducerPoolBundle         = pdi.RegisterInjectionToken("sqs_producer_pool_bundle")
+	RegistryS3BucketBundle                = pdi.RegisterInjectionToken("s3_bucket_bundle")
+	RegistryTokenCronManager              = pdi.RegisterInjectionToken("cron_manager")
+	RegistryKafkaConsumerBundle           = pdi.RegisterInjectionToken("kafka_consumer_bundle")
+	RegistryKafkaProducerBundle           = pdi.RegisterInjectionToken("kafka_producer_bundle")
+)
+
+// Authentication domain tokens
+{{if .Features.auth}}
+var (
+	RegistryTokenAuthenticationDataLayer     = pdi.RegisterInjectionToken("auth_data_layer")
+	RegistryTokenAuthenticationBusinessLayer = pdi.RegisterInjectionToken("auth_business_layer")
+	RegistryTokenPasswordBusinessLayer       = pdi.RegisterInjectionToken("password_business_layer")
+	RegistryTokenRegistrationBusinessLayer   = pdi.RegisterInjectionToken("registration_business_layer")
+	RegistryTokenUserProfileBusinessLayer    = pdi.RegisterInjectionToken("user_profile_business_layer")
+	RegistryTokenAuthenticationLoginService  = pdi.RegisterInjectionToken("auth_login_service")
+	RegistryTokenUserDataLayer               = pdi.RegisterInjectionToken("user_data_layer")
+	RegistryTokenPasswordDataLayer           = pdi.RegisterInjectionToken("password_data_layer")
+	RegistryTokenRegistrationDataLayer       = pdi.RegisterInjectionToken("registration_data_layer")
+	RegistryTokenUserService                 = pdi.RegisterInjectionToken("user_service")
+	RegistryTokenPasswordService             = pdi.RegisterInjectionToken("password_service")
+	RegistryTokenOtpDataLayer                = pdi.RegisterInjectionToken("otp_data_layer")
+	RegistryTokenUserOtpService              = pdi.RegisterInjectionToken("user_otp_service")
+)
+{{end}}
+
+// Notifications domain tokens
+{{if or .Features.events .Features.notifications}}
+var (
+	RegistryTokenNotificationsDataLayer      = pdi.RegisterInjectionToken("notifications_data_layer")
+	RegistryTokenNotificationsBusinessLayer  = pdi.RegisterInjectionToken("notifications_business_layer")
+	RegistryTokenNotificationAdapters        = pdi.RegisterInjectionToken("notification_adapters")
+	RegistryTokenNotificationsHelpersService = pdi.RegisterInjectionToken("notifications_helpers_service")
+	RegistryTokenNotificationsPushService    = pdi.RegisterInjectionToken("notifications_push_service")
+	RegistryTokenNotificationsSMSService     = pdi.RegisterInjectionToken("notifications_sms_service")
+	RegistryTokenNotificationsEmailService   = pdi.RegisterInjectionToken("notifications_email_service")
+	RegistryTokenNotificationFcmTokenService = pdi.RegisterInjectionToken("notification_fcm_token_service")
+)
+{{end}}
+
+// Project domain tokens (for custom microservices)
+{{range .Domains}}
+{{if and (ne .Name "authentication") (ne .Name "notifications")}}
+var (
+	RegistryToken{{.NameCamel}}DataLayer     = pdi.RegisterInjectionToken("{{.Name}}_data_layer")
+	RegistryToken{{.NameCamel}}BusinessLayer = pdi.RegisterInjectionToken("{{.Name}}_business_layer")
+	RegistryToken{{.NameCamel}}Service       = pdi.RegisterInjectionToken("{{.Name}}_service")
+)
+{{end}}
+{{end}}
+
+// APIs
+var (
+	RegistryTokenRecaptchaAPI = pdi.RegisterInjectionToken("recaptcha_api")
+)
+
+// Validators
+var (
+	RegistryTokenClassValidators = pdi.RegisterInjectionToken("class_validators")
+)

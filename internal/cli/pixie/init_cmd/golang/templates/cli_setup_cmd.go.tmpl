@@ -1,0 +1,208 @@
+package {{.ProjectNameSnake}}
+
+import (
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/pixie-sh/core-go/pkg/configuration"
+	"github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/env"
+	blogger "github.com/pixie-sh/core-go/pkg/logger"
+	"github.com/pixie-sh/errors-go"
+	"github.com/pixie-sh/logger-go/logger"
+	"github.com/spf13/cobra"
+
+	"{{.ModuleName}}/infra/version"
+	"{{.ModuleName}}/internal/cli/{{.ProjectNameSnake}}/cli_pkg"
+	"{{.ModuleName}}/internal/cli/{{.ProjectNameSnake}}/models"
+)
+
+var (
+	configFilePath = "./misc/configs/{{.CLIName}}.json"
+	envFilePath    = "./misc/envs/{{.CLIName}}.%s.env"
+)
+
+func checkEnv() {
+	scope := env.EnvScope()
+	if len(scope) == 0 {
+		env.SetScope("local")
+	}
+
+	logParser := env.EnvLogParser()
+	if len(logParser) == 0 {
+		env.SetLogParser("text")
+	}
+
+	appName := env.EnvAppName()
+	if len(appName) == 0 {
+		env.SetAppName("{{.CLIName}}")
+	}
+}
+
+func preRunConfigWrapper(c *Cli, cmd *cobra.Command) func(cmd *cobra.Command, args []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		var cfg models.CliConfiguration
+
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+
+		if flag.Lookup("config") == nil {
+			defaultConfigPath, err := c.rootCmd.PersistentFlags().GetString("config")
+			if err != nil || len(defaultConfigPath) == 0 {
+				flag.String("config", fmt.Sprintf("%s/.{{.ProjectNameSnake}}/{{.CLIName}}.json", homeDir), "config file path")
+			} else {
+				flag.String("config", defaultConfigPath, "config file path")
+			}
+		}
+
+		if flag.Lookup("env") == nil {
+			defaultEnv, err := c.rootCmd.PersistentFlags().GetString("env")
+			if err != nil || len(defaultEnv) == 0 {
+				flag.String("env", fmt.Sprintf("%s/.{{.ProjectNameSnake}}/{{.CLIName}}.%s.env", homeDir, env.EnvScope()), "env file path")
+			} else {
+				flag.String("env", defaultEnv, "config file path")
+			}
+		}
+
+		configuration.Setup(&cfg, false, true)
+		cmd.SetContext(cli_pkg.SetCtxConfiguration(cmd.Context(), cfg))
+
+		// re-set logger after config is loaded
+		return preRunLogger(c, cmd)(cmd, args)
+	}
+}
+
+func preRunLogger(c *Cli, cmd *cobra.Command) func(cmd *cobra.Command, args []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		ctx := cmd.Context()
+		newLogger, _ := logger.NewLogger(
+			ctx,
+			os.Stdout,
+			env.EnvAppName(),
+			env.EnvScope(),
+			fmt.Sprintf("%s-%s", version.Version, version.Commit),
+			env.LogLevel(),
+			[]string{logger.TraceID},
+		)
+
+		ctx = context.SetCtxLogger(ctx, newLogger)
+		logger.Logger = newLogger
+
+		cmd.SetContext(ctx)
+		return nil
+	}
+}
+
+func setPreRunHooks(c *Cli, cmd *cobra.Command) {
+	if cmd.PreRunE == nil && (cmd.Run != nil || cmd.RunE != nil) {
+		cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+			err := preRunLogger(c, cmd)(cmd, args)
+			errors.Must(err)
+
+			err = preRunConfigWrapper(c, cmd)(cmd, args)
+			errors.Must(err)
+			return nil
+		}
+	}
+
+	for _, subCmd := range cmd.Commands() {
+		setPreRunHooks(c, subCmd)
+	}
+}
+
+func cmdSetupCli() *cobra.Command {
+	setupCmd := &cobra.Command{
+		Use:   "setup",
+		Short: fmt.Sprintf("Creates a configuration folder at ~/.{{.ProjectNameSnake}} if it doesn't exist and copy defaults, for scope '%s'", env.EnvScope()),
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			return preRunLogger(nil, cmd)(cmd, args)
+		}, //ignore config wrapper
+		Run: func(cmd *cobra.Command, args []string) {
+			var logger = context.GetCtxLogger(cmd.Context())
+			var silent, _ = cmd.Flags().GetBool("silent")
+			if silent {
+				logger = &blogger.SilentLogger{}
+			}
+
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				logger.Log("Error finding user home directory:", err)
+				return
+			}
+
+			configDir := homeDir + "/.{{.ProjectNameSnake}}"
+
+			if os.Getenv("CLI_CONFIG_PATH") != "" {
+				configFilePath = os.Getenv("CLI_CONFIG_PATH")
+			}
+
+			if os.Getenv("CLI_ENV_PATH") != "" {
+				envFilePath = os.Getenv("CLI_ENV_PATH")
+			}
+
+			if _, err := os.Stat(configDir); os.IsNotExist(err) {
+				err := os.Mkdir(configDir, 0755)
+				if err != nil {
+					logger.Log("Error creating configuration folder:", err)
+					return
+				}
+				logger.Log("Configuration folder created at '%s'", configDir)
+			} else {
+				logger.Log("Configuration folder already exists at '%s'", configDir)
+			}
+
+			// Write the paths to the config file
+			configData := map[string]string{
+				"config_file":      configFilePath,
+				"env_file_local":   fmt.Sprintf(envFilePath, "local"),
+				"env_file_staging": fmt.Sprintf(envFilePath, "staging"),
+				"env_file_custom":  fmt.Sprintf(envFilePath, env.EnvScope()),
+			}
+
+			for _, path := range configData {
+				fileName := filepath.Base(path)
+				destPath := filepath.Join(configDir, fileName)
+
+				sourceFile, err := os.Open(path)
+				if err != nil {
+					logger.Error("Error opening source file %s; %s", path, err)
+					continue
+				}
+				defer sourceFile.Close()
+
+				destFile, err := os.Create(destPath)
+				if err != nil {
+					logger.Error("Error creating destination file %s; %s", destPath, err)
+					continue
+				}
+				defer destFile.Close()
+
+				_, err = io.Copy(destFile, sourceFile)
+				if err != nil {
+					logger.
+						With("source", path).
+						With("destination", destPath).
+						With("error", err).
+						Error("Error copying file")
+
+					continue
+				}
+
+				logger.Log("Copied '%s' to '%s'", path, destPath)
+			}
+
+			if !silent {
+				context.GetCtxLogger(cmd.Context()).Log("Paths registered in config file '%s'", configDir)
+			} else {
+				fmt.Printf("Cli setup complete. Check %s\n", configDir)
+			}
+		},
+	}
+	setupCmd.Flags().Bool("silent", false, "silently install cli")
+	return setupCmd
+}

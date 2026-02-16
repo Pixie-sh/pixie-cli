@@ -1,0 +1,50 @@
+package uidgen
+
+import (
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+// IsUser checks if the UID belongs to a user
+func IsUser(id uid.UID) bool {
+	scope, err := id.Scope()
+	if err != nil {
+		return false
+	}
+
+	return scope == user
+}
+
+// IsUserSession checks if the UID belongs to a user session
+func IsUserSession(id uid.UID) bool {
+	scope, err := id.Scope()
+	if err != nil {
+		return false
+	}
+
+	return scope == userSession
+}
+
+// IsJWTSession checks if the UID belongs to a JWT session
+func IsJWTSession(id uid.UID) bool {
+	scope, err := id.Scope()
+	if err != nil {
+		return false
+	}
+
+	return scope == jwtSession
+}
+
+// IsSession checks if the UID belongs to any type of session
+func IsSession(id uid.UID) bool {
+	return IsUserSession(id) || IsJWTSession(id)
+}
+
+// IsOTP checks if the UID belongs to an OTP
+func IsOTP(id uid.UID) bool {
+	scope, err := id.Scope()
+	if err != nil {
+		return false
+	}
+
+	return scope == otp
+}

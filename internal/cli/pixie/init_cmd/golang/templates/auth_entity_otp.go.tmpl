@@ -1,0 +1,53 @@
+package auth_entities
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/models/database_models"
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+type OTPStatusEnum string
+
+const (
+	OTPStatusPending OTPStatusEnum = "pending"
+	OTPStatusExpired OTPStatusEnum = "expired"
+	OTPStatusUsed    OTPStatusEnum = "used"
+)
+
+func (s OTPStatusEnum) String() string {
+	return string(s)
+}
+
+// UserOTP represents a one-time password for email verification
+type UserOTP struct {
+	ID           uid.UID       `gorm:"primary_key,type:uuid"`
+	UserID       uid.UID       `gorm:"type:uuid;not null;index:idx_otp_user_id"`
+	EmailAddress string        `gorm:"type:text;not null;index:idx_otp_email"`
+	OTPCode      string        `gorm:"size:6;not null;index:idx_otp_code"`
+	Status       OTPStatusEnum `gorm:"type:text;default:'pending';index:idx_otp_status"`
+	ExpiresAt    time.Time     `gorm:"not null;index:idx_otp_expires_at"`
+
+	// Relationship with User
+	User *User `gorm:"foreignKey:UserID;references:ID"`
+	database_models.SoftDeletable
+}
+
+func (UserOTP) TableName() string {
+	return "user_otps"
+}
+
+// IsExpired checks if the UserOTP has expired
+func (o UserOTP) IsExpired() bool {
+	return time.Now().UTC().After(o.ExpiresAt)
+}
+
+// IsPending checks if the UserOTP is in pending status
+func (o UserOTP) IsPending() bool {
+	return o.Status == OTPStatusPending
+}
+
+// IsValid checks if the UserOTP is valid (pending and not expired)
+func (o UserOTP) IsValid() bool {
+	return o.IsPending() && !o.IsExpired()
+}

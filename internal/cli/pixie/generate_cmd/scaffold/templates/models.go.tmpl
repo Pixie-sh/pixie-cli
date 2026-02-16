@@ -1,0 +1,60 @@
+package {{.DomainName}}
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+// Create{{.DomainNameCamel}}Request represents the request payload for creating a {{.DomainName}}
+type Create{{.DomainNameCamel}}Request struct {
+	Name        string `json:"name" validate:"required,min=1,max=255"`
+	Description string `json:"description" validate:"max=1000"`
+	{{- if .Features.auth}}
+	UserID      uid.UID `json:"user_id,omitempty"`
+	{{- end}}
+}
+
+// Update{{.DomainNameCamel}}Request represents the request payload for updating a {{.DomainName}}
+type Update{{.DomainNameCamel}}Request struct {
+	Name        string `json:"name" validate:"required,min=1,max=255"`
+	Description string `json:"description" validate:"max=1000"`
+}
+
+// {{.DomainNameCamel}}Response represents the response payload for a {{.DomainName}}
+type {{.DomainNameCamel}}Response struct {
+	ID          uid.UID   `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	{{- if .Features.auth}}
+	UserID      uid.UID   `json:"user_id,omitempty"`
+	{{- end}}
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// {{.DomainNameCamel}}ListResponse represents the response payload for listing {{.DomainName}}s
+type {{.DomainNameCamel}}ListResponse struct {
+	{{.DomainNameCamel}}s []{{.DomainNameCamel}}Response `json:"{{.DomainName}}s"`
+	Total    int                      `json:"total"`
+	Page     int                      `json:"page,omitempty"`
+	PageSize int                      `json:"page_size,omitempty"`
+}
+
+{{- if .Features.auth}}
+// {{.DomainNameCamel}}FilterRequest represents filtering options for {{.DomainName}} queries
+type {{.DomainNameCamel}}FilterRequest struct {
+	UserID   uid.UID `json:"user_id,omitempty" form:"user_id"`
+	Name     string  `json:"name,omitempty" form:"name"`
+	Page     int     `json:"page,omitempty" form:"page"`
+	PageSize int     `json:"page_size,omitempty" form:"page_size"`
+}
+{{- end}}
+
+// {{.DomainNameCamel}}ErrorResponse represents error response for {{.DomainName}} operations
+type {{.DomainNameCamel}}ErrorResponse struct {
+	Error   string `json:"error"`
+	Code    string `json:"code,omitempty"`
+	Field   string `json:"field,omitempty"`
+	Message string `json:"message"`
+}

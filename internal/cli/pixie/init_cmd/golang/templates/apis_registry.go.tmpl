@@ -1,0 +1,18 @@
+package apis
+
+import (
+	"sync"
+)
+
+var once sync.Once
+
+// Registry registers external API clients.
+// Add your API client registrations here as needed.
+func Registry() {
+	once.Do(func() {
+		// Register external API clients here
+		// Example:
+		// errors.Must(di.RegisterConfiguration[*MyAPIConfiguration](RegistryMyAPIConfiguration))
+		// errors.Must(di.Register[*MyAPI](RegistryMyAPI))
+	})
+}

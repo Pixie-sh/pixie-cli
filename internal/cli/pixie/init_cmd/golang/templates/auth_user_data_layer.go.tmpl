@@ -1,0 +1,67 @@
+package authentication_data_layer
+
+import (
+	"context"
+
+	"github.com/pixie-sh/core-go/infra/state_machine/state_machine_repositories"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/layer"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"github.com/pixie-sh/di-go"
+
+	"{{ .ModuleName }}/bundles"
+	internaldi "{{ .ModuleName }}/infra/di"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_repositories"
+)
+
+type UserDataLayerConfiguration struct {
+	DatabaseORMConfiguration bundles.DatabaseORMConfiguration `json:"database_orm"`
+}
+
+func (u UserDataLayerConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(u, lookupPath)
+}
+
+type UserDataLayer struct {
+	layer.GenericDataLayer
+
+	config           UserDataLayerConfiguration
+	UserRepository   auth_repositories.UserRepository
+	StateMachineRepo state_machine_repositories.StateMachineRepository
+}
+
+func NewUserDataLayer(_ context.Context, orm *database.Orm, layerConfig UserDataLayerConfiguration) (UserDataLayer, error) {
+	return UserDataLayer{
+		GenericDataLayer: layer.NewGenericDataLayer(orm),
+
+		config:           layerConfig,
+		UserRepository:   auth_repositories.NewUserRepository(orm.DB),
+		StateMachineRepo: state_machine_repositories.NewStateMachineRepository(orm.DB),
+	}, nil
+}
+
+func RegistryUserDataLayerConfiguration(ctx di.Context, opts *di.RegistryOpts) (*UserDataLayerConfiguration, error) {
+	return di.ConfigurationLookup[*UserDataLayerConfiguration](ctx, opts)
+}
+
+func RegistryUserDataLayer(ctx di.Context, opts *di.RegistryOpts) (*UserDataLayer, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	cfg, err := di.CreateConfiguration[*UserDataLayerConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	orm, err := di.Create[*bundles.DatabaseORM](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenDatabaseORM))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenDatabaseORM, internaldi.RegistryTokenUserDataLayer)
+		return nil, err
+	}
+
+	userDataLayer, err := NewUserDataLayer(ctx, orm.Orm, *cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &userDataLayer, nil
+}

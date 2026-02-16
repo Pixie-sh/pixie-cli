@@ -1,0 +1,63 @@
+package authentication_data_layer
+
+import (
+	"context"
+
+	"github.com/pixie-sh/core-go/infra/state_machine/state_machine_repositories"
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/layer"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"github.com/pixie-sh/di-go"
+
+	"{{.ModuleName}}/bundles"
+	internaldi "{{.ModuleName}}/infra/di"
+	"{{.ModuleName}}/internal/domains/authentication/authentication_data_layer/auth_repositories"
+)
+
+type RegistrationDataLayerConfiguration struct {
+	DatabaseORMConfiguration bundles.DatabaseORMConfiguration `json:"database_orm"`
+}
+
+func (r RegistrationDataLayerConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(r, lookupPath)
+}
+
+type RegistrationDataLayer struct {
+	layer.GenericDataLayer
+	orm *database.Orm
+
+	StateMachineRepo state_machine_repositories.StateMachineRepository
+	UserRepository   auth_repositories.UserRepository
+	OTPRepository    auth_repositories.OTPRepository
+}
+
+func NewRegistrationDataLayer(_ context.Context, orm *database.Orm) RegistrationDataLayer {
+	return RegistrationDataLayer{
+		GenericDataLayer: layer.NewGenericDataLayer(orm),
+		StateMachineRepo: state_machine_repositories.NewStateMachineRepository(orm.DB),
+		UserRepository:   auth_repositories.NewUserRepository(orm.DB),
+		OTPRepository:    auth_repositories.NewOTPRepository(orm.DB),
+	}
+}
+
+func RegistryRegistrationDataLayerConfiguration(ctx di.Context, opts *di.RegistryOpts) (*RegistrationDataLayerConfiguration, error) {
+	return di.ConfigurationLookup[*RegistrationDataLayerConfiguration](ctx, opts)
+}
+
+func RegistryRegistrationDataLayer(ctx di.Context, opts *di.RegistryOpts) (*RegistrationDataLayer, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	_, err := di.CreateConfiguration[*RegistrationDataLayerConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	orm, err := di.Create[*bundles.DatabaseORM](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenDatabaseORM))
+	if err != nil {
+		log.With("err", err).Error("Failed to initialize %s for %s", internaldi.RegistryTokenDatabaseORM, internaldi.RegistryTokenRegistrationDataLayer)
+		return nil, err
+	}
+
+	registrationDataLayer := NewRegistrationDataLayer(ctx, orm.Orm)
+	return &registrationDataLayer, nil
+}

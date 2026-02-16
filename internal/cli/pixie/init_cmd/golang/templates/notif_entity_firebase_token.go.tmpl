@@ -1,0 +1,30 @@
+package notifications_entities
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+// FirebaseTokenStatus represents the status of a Firebase token
+type FirebaseTokenStatus string
+
+const (
+	FirebaseTokenStatusActive   FirebaseTokenStatus = "active"
+	FirebaseTokenStatusInactive FirebaseTokenStatus = "inactive"
+)
+
+// FirebaseToken represents a Firebase Cloud Messaging token for push notifications
+type FirebaseToken struct {
+	ID       uid.UID `gorm:"primary_key"`
+	UserID   uid.UID `gorm:"type:uuid"`
+	FcmToken string
+	Status   FirebaseTokenStatus
+
+	CreatedAt *time.Time `gorm:"type:timestamp"`
+	UpdatedAt *time.Time `gorm:"type:timestamp"`
+}
+
+func (FirebaseToken) TableName() string {
+	return "notifications_firebase_tokens"
+}
