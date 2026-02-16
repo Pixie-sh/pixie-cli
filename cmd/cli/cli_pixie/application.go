@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/pixie-sh/pixie-cli/internal/cli/pixie/generate_cmd"
 	"github.com/pixie-sh/pixie-cli/internal/cli/pixie/init_cmd"
 	"github.com/pixie-sh/pixie-cli/internal/version"
 )
@@ -26,7 +27,8 @@ func main() {
 	rootCmd.PersistentFlags().String("env", "", "Path to environment file")
 
 	// Register commands
-	rootCmd.AddCommand(init_cmd.InitCmd()) // Multi-stack init command
+	rootCmd.AddCommand(init_cmd.InitCmd())         // Multi-stack init command
+	rootCmd.AddCommand(generate_cmd.GenerateCmd()) // Code generation tools
 
 	// Add version command for explicit version info
 	rootCmd.AddCommand(&cobra.Command{

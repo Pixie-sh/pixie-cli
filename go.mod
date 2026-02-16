@@ -5,6 +5,7 @@ go 1.25.1
 require (
 	github.com/pixie-sh/errors-go v0.3.7
 	github.com/spf13/cobra v1.10.2
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

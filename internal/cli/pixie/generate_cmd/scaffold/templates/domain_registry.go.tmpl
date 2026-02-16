@@ -1,0 +1,40 @@
+package {{.DomainName}}
+
+import (
+	"sync"
+
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/errors-go"
+
+	{{- if .Features.apis}}
+	"{{.ModuleName}}/infra/apis"
+	{{- end}}
+	internaldi "{{.ModuleName}}/infra/di"
+	"{{.ModuleName}}/internal/domains/{{.DomainName}}/{{.DomainName}}_business_layer"
+	"{{.ModuleName}}/internal/domains/{{.DomainName}}/{{.DomainName}}_data_layer"
+	"{{.ModuleName}}/internal/domains/{{.DomainName}}/{{.DomainName}}_services"
+)
+
+var once sync.Once
+
+func Registry() {
+	once.Do(func() {
+		//data layers
+		errors.Must(di.RegisterConfiguration[*{{.DomainName}}_data_layer.{{.DomainNameCamel}}DataLayerConfiguration]({{.DomainName}}_data_layer.Registry{{.DomainNameCamel}}DataLayerConfiguration, di.WithToken(internaldi.RegistryToken{{.DomainNameCamel}}DataLayer)))
+		errors.Must(di.Register[*{{.DomainName}}_data_layer.{{.DomainNameCamel}}DataLayer]({{.DomainName}}_data_layer.Registry{{.DomainNameCamel}}DataLayer, di.WithToken(internaldi.RegistryToken{{.DomainNameCamel}}DataLayer)))
+
+		//business layers
+		errors.Must(di.RegisterConfiguration[*{{.DomainName}}_business_layer.{{.DomainNameCamel}}BusinessLayerConfiguration]({{.DomainName}}_business_layer.Registry{{.DomainNameCamel}}BusinessLayerConfiguration, di.WithToken(internaldi.RegistryToken{{.DomainNameCamel}}BusinessLayer)))
+		errors.Must(di.Register[*{{.DomainName}}_business_layer.{{.DomainNameCamel}}BusinessLayer]({{.DomainName}}_business_layer.Registry{{.DomainNameCamel}}BusinessLayer, di.WithToken(internaldi.RegistryToken{{.DomainNameCamel}}BusinessLayer)))
+
+		//services
+		errors.Must(di.RegisterConfiguration[*{{.DomainName}}_services.{{.DomainNameCamel}}ServiceConfiguration]({{.DomainName}}_services.Registry{{.DomainNameCamel}}ServiceConfiguration, di.WithToken(internaldi.RegistryToken{{.DomainNameCamel}}Service)))
+		errors.Must(di.Register[*{{.DomainName}}_services.{{.DomainNameCamel}}Service]({{.DomainName}}_services.Registry{{.DomainNameCamel}}Service, di.WithToken(internaldi.RegistryToken{{.DomainNameCamel}}Service)))
+
+		{{- if .Features.apis}}
+		//apis
+		errors.Must(di.RegisterConfiguration[*apis.{{.DomainNameCamel}}APIConfiguration](apis.Registry{{.DomainNameCamel}}APIConfiguration, di.WithToken(internaldi.RegistryToken{{.DomainNameCamel}}API)))
+		errors.Must(di.Register[*apis.{{.DomainNameCamel}}API](apis.Registry{{.DomainNameCamel}}API, di.WithToken(internaldi.RegistryToken{{.DomainNameCamel}}API)))
+		{{- end}}
+	})
+}

@@ -1,0 +1,37 @@
+package {{.DomainName}}_migrations
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/models/database_models"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/database-helpers-go/database"
+	"gorm.io/gorm"
+)
+
+type {{.EntityName}}{{.MigrationTimestamp}} struct {
+	database_models.SoftDeletable
+
+	ID          uid.UID   `gorm:"primaryKey;type:char(26)"`
+	Name        string    `gorm:"not null;size:255"`
+	Description string    `gorm:"type:text"`
+	{{- if .Features.auth}}
+	UserID      uid.UID   `gorm:"type:char(26);index"`
+	{{- end}}
+	CreatedAt   time.Time `gorm:"autoCreateTime"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime"`
+}
+
+func ({{.EntityName}}{{.MigrationTimestamp}}) TableName() string {
+	return "{{.DomainName}}_{{.EntityName}}"
+}
+
+var Create{{.EntityNameCamel}}Table{{.MigrationTimestamp}} = database.Migration{
+	ID: "{{.MigrationTimestamp}}_Create{{.EntityNameCamel}}Table",
+	Migrate: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&{{.EntityName}}{{.MigrationTimestamp}}{})
+	},
+	Rollback: func(tx *gorm.DB) error {
+		return tx.Migrator().DropTable(&{{.EntityName}}{{.MigrationTimestamp}}{})
+	},
+}

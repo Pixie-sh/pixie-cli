@@ -1,0 +1,72 @@
+package ms_{{.ServiceName}}
+
+import (
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+
+	{{- if .Features.auth}}
+	"{{.ModuleName}}/bundles"
+	{{- end}}
+	"{{.ModuleName}}/internal/domains/{{.DomainName}}/{{.DomainName}}_business_layer"
+	{{- if .Features.auth}}
+	httpcontext "{{.ModuleName}}/pkg/context/http"
+	{{- end}}
+	"{{.ModuleName}}/pkg/models/{{.DomainName}}"
+)
+
+type httpControllers struct {
+	server        http.Server
+	{{- if .Features.auth}}
+	gates         *bundles.AuthorizationGatesBundle
+	{{- end}}
+	businessLayer *{{.DomainName}}_business_layer.{{.DomainNameCamel}}BusinessLayer
+}
+
+func (c httpControllers) SetupHTTP() error {
+	{{.DomainName}}Group := c.server.Group("/{{.DomainName}}")
+
+	// Example public routes
+	{{.DomainName}}Group.Get("/health", c.handleHealth)
+
+	{{- if .Features.auth}}
+	// Example auth routes
+	{{.DomainName}}Group.Post("/create", {{if .Features.auth}}c.gates.IsAuthenticated.Authenticated(), {{end}}c.handleCreate)
+
+	// Example protected routes (permission required)
+	{{.DomainName}}Group.Get(
+	    "/protected-feature",
+	     c.gates.IsAuthenticated.Authenticated(),
+	     c.gates.Permissions.AnyFeaturesOf("some.permission"),
+	     c.handleProtected,
+	)
+	{{- end}}
+	
+	return nil
+}
+
+// handleHealth handles GET /{{.DomainName}}/health
+func (c httpControllers) handleHealth(ctx http.ServerCtx) error {
+	return http.Response(ctx, map[string]interface{}{"status": "healthy"}, 200)
+}
+
+// handleCreate handles POST /{{.DomainName}}/create
+func (c httpControllers) handleCreate(ctx http.ServerCtx) error {
+	var req {{.DomainName}}.Create{{.DomainNameCamel}}Request
+	if err := ctx.BodyParser(&req); err != nil {
+		return http.Response(ctx, "Invalid request body", 400)
+	}
+
+	ip := ctx.IP()
+	response, err := c.businessLayer.Create{{.DomainNameCamel}}(ctx.Context(), req, ip)
+	return http.Response(ctx, response, err)
+}
+
+{{- if .Features.auth}}
+// handleProtected handles GET /{{.DomainName}}/protected
+func (c httpControllers) handleProtected(ctx http.ServerCtx) error {
+	// Get JWT from session manager context
+	jwt := httpcontext.GetCtxJWT(ctx)
+	
+	response, err := c.businessLayer.GetProtected{{.DomainNameCamel}}(ctx.Context(), jwt.User.ID)
+	return http.Response(ctx, response, err)
+}
+{{- end}}

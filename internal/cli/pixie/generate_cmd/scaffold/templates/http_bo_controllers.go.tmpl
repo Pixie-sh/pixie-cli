@@ -1,0 +1,58 @@
+package ms_{{.ServiceName}}
+
+import (
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+	"github.com/pixie-sh/core-go/pkg/uid"
+
+	"{{.ModuleName}}/bundles"
+	"{{.ModuleName}}/internal/domains/{{.DomainName}}/{{.DomainName}}_business_layer"
+)
+
+type httpBoControllers struct {
+	server        http.Server
+	gates         *bundles.AuthorizationGatesBundle
+	businessLayer *{{.DomainName}}_business_layer.{{.DomainNameCamel}}BusinessLayer
+}
+
+func (c httpBoControllers) SetupHTTP() error {
+	hasPermission := c.gates.IsAuthenticated.AllFeaturesOf
+	bo := c.server.Group("/backoffice", c.gates.IsAuthenticated.Authenticated(), hasPermission("admin.backoffice"))
+
+	bo.Get("/{{.DomainName}}", c.gates.IsAuthenticated.Authenticated(), hasPermission("{{.DomainName}}.list"), c.handleList{{.DomainNameCamel}})
+	bo.Get("/{{.DomainName}}/:id", c.gates.IsAuthenticated.Authenticated(), hasPermission("{{.DomainName}}.view"), c.handleGet{{.DomainNameCamel}})
+	bo.Delete("/{{.DomainName}}/:id", c.gates.IsAuthenticated.Authenticated(), hasPermission("{{.DomainName}}.delete"), c.handleDelete{{.DomainNameCamel}})
+
+	return nil
+}
+
+// handleList{{.DomainNameCamel}} handles GET /backoffice/{{.DomainName}}
+func (c httpBoControllers) handleList{{.DomainNameCamel}}(ctx http.ServerCtx) error {
+	response, err := c.businessLayer.List{{.DomainNameCamel}}(ctx.Context())
+	return http.Response(ctx, response, err)
+}
+
+// handleGet{{.DomainNameCamel}} handles GET /backoffice/{{.DomainName}}/:id
+func (c httpBoControllers) handleGet{{.DomainNameCamel}}(ctx http.ServerCtx) error {
+	idStr := ctx.Params("id")
+
+	id, err := uid.FromString(idStr)
+	if err != nil {
+		return http.Response(ctx, "invalid {{.DomainName}} id", 400)
+	}
+
+	response, err := c.businessLayer.Get{{.DomainNameCamel}}ByID(ctx.Context(), id)
+	return http.Response(ctx, response, err)
+}
+
+// handleDelete{{.DomainNameCamel}} handles DELETE /backoffice/{{.DomainName}}/:id
+func (c httpBoControllers) handleDelete{{.DomainNameCamel}}(ctx http.ServerCtx) error {
+	idStr := ctx.Params("id")
+
+	id, err := uid.FromString(idStr)
+	if err != nil {
+		return http.Response(ctx, "invalid {{.DomainName}} id", 400)
+	}
+
+	err = c.businessLayer.Delete{{.DomainNameCamel}}ByID(ctx.Context(), id)
+	return http.Response(ctx, map[string]interface{}{"success": true}, err)
+}
