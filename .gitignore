@@ -11,9 +11,7 @@
 /.opencode/knowledge
 /.opencode/knowledge/assets
 /.opencode/knowledge/references
-/.idea/modules.xml
-/.idea/pixie-cli.iml
-/.idea/workspace.xml
+/.idea/
 /cli_pixie
 /bin/
 /coverage.out
