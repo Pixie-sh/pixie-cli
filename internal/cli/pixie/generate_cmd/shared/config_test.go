@@ -41,8 +41,14 @@ func TestLoadConfig_NoFile(t *testing.T) {
 	// Run in a temp directory with no config files
 	tmp := t.TempDir()
 	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	os.Chdir(tmp)
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -62,8 +68,14 @@ func TestLoadConfig_NoFile(t *testing.T) {
 func TestLoadConfig_PixieYaml(t *testing.T) {
 	tmp := t.TempDir()
 	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	os.Chdir(tmp)
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
 
 	content := `generate:
   microservice_dir: "custom/ms"
@@ -74,7 +86,9 @@ func TestLoadConfig_PixieYaml(t *testing.T) {
   oauth_authorize: "https://auth.example.com/authorize"
   oauth_token: "https://auth.example.com/token"
 `
-	os.WriteFile("pixie.yaml", []byte(content), 0644)
+	if err := os.WriteFile("pixie.yaml", []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write pixie.yaml: %v", err)
+	}
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -109,12 +123,22 @@ func TestLoadConfig_PixieYaml(t *testing.T) {
 func TestLoadConfig_DotPixieYamlPriority(t *testing.T) {
 	tmp := t.TempDir()
 	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	os.Chdir(tmp)
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
 
 	// Both files exist; .pixie.yaml should win
-	os.WriteFile(".pixie.yaml", []byte("generate:\n  microservice_dir: \"from-dot-pixie\"\n"), 0644)
-	os.WriteFile("pixie.yaml", []byte("generate:\n  microservice_dir: \"from-pixie\"\n"), 0644)
+	if err := os.WriteFile(".pixie.yaml", []byte("generate:\n  microservice_dir: \"from-dot-pixie\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write .pixie.yaml: %v", err)
+	}
+	if err := os.WriteFile("pixie.yaml", []byte("generate:\n  microservice_dir: \"from-pixie\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write pixie.yaml: %v", err)
+	}
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -129,10 +153,18 @@ func TestLoadConfig_DotPixieYamlPriority(t *testing.T) {
 func TestLoadConfig_InvalidYAML(t *testing.T) {
 	tmp := t.TempDir()
 	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	os.Chdir(tmp)
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
 
-	os.WriteFile(".pixie.yaml", []byte("{{invalid yaml}}"), 0644)
+	if err := os.WriteFile(".pixie.yaml", []byte("{{invalid yaml}}"), 0644); err != nil {
+		t.Fatalf("Failed to write .pixie.yaml: %v", err)
+	}
 
 	_, err := LoadConfig()
 	if err == nil {
@@ -143,11 +175,19 @@ func TestLoadConfig_InvalidYAML(t *testing.T) {
 func TestLoadConfig_PartialOverride(t *testing.T) {
 	tmp := t.TempDir()
 	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	os.Chdir(tmp)
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
 
 	// Only override one field; others should keep defaults
-	os.WriteFile("pixie.yaml", []byte("generate:\n  domain_dir: \"custom/domain\"\n"), 0644)
+	if err := os.WriteFile("pixie.yaml", []byte("generate:\n  domain_dir: \"custom/domain\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write pixie.yaml: %v", err)
+	}
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -166,8 +206,14 @@ func TestLoadConfig_PartialOverride(t *testing.T) {
 func TestDetectModule(t *testing.T) {
 	tmp := t.TempDir()
 	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	os.Chdir(tmp)
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
 
 	goMod := `module github.com/example/myproject
 
@@ -177,7 +223,9 @@ require (
 	github.com/some/dep v1.0.0
 )
 `
-	os.WriteFile("go.mod", []byte(goMod), 0644)
+	if err := os.WriteFile("go.mod", []byte(goMod), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
 
 	mod, err := DetectModule()
 	if err != nil {
@@ -191,8 +239,14 @@ require (
 func TestDetectModule_NoGoMod(t *testing.T) {
 	tmp := t.TempDir()
 	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	os.Chdir(tmp)
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
 
 	_, err := DetectModule()
 	if err == nil {
@@ -203,10 +257,18 @@ func TestDetectModule_NoGoMod(t *testing.T) {
 func TestDetectModule_NoModuleLine(t *testing.T) {
 	tmp := t.TempDir()
 	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	os.Chdir(tmp)
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
 
-	os.WriteFile("go.mod", []byte("go 1.21\n"), 0644)
+	if err := os.WriteFile("go.mod", []byte("go 1.21\n"), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
 
 	_, err := DetectModule()
 	if err == nil {
@@ -227,10 +289,18 @@ func TestResolveModule_Provided(t *testing.T) {
 func TestResolveModule_AutoDetect(t *testing.T) {
 	tmp := t.TempDir()
 	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-	os.Chdir(tmp)
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
 
-	os.WriteFile("go.mod", []byte("module github.com/auto/detected\n\ngo 1.21\n"), 0644)
+	if err := os.WriteFile("go.mod", []byte("module github.com/auto/detected\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
 
 	mod, err := ResolveModule("")
 	if err != nil {

@@ -88,7 +88,7 @@ func IsValidSnakeCase(s string) bool {
 		return false
 	}
 	for i, r := range s {
-		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9' && i > 0) || (r == '_' && i > 0 && i < len(s)-1)) {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9' || i == 0) && (r != '_' || i == 0 || i >= len(s)-1) {
 			return false
 		}
 	}
@@ -101,7 +101,7 @@ func IsValidIdentifier(s string) bool {
 		return false
 	}
 	for i, r := range s {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9' && i > 0)) {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9' || i == 0) {
 			return false
 		}
 	}

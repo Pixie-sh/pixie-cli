@@ -113,7 +113,9 @@ Examples:
 	cmd.Flags().Bool("skip-i18n", false, "Skip internationalization")
 
 	// Mark required flags
-	cmd.MarkFlagRequired("name")
+	if err := cmd.MarkFlagRequired("name"); err != nil {
+		panic(fmt.Sprintf("Failed to mark flag as required: %v", err))
+	}
 
 	return cmd
 }

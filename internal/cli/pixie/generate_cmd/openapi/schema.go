@@ -217,48 +217,6 @@ func (r *TypeResolver) findGoFiles(dir string) ([]string, error) {
 	return files, err
 }
 
-// parseFileForStruct parses a Go file and looks for a specific struct
-func (r *TypeResolver) parseFileForStruct(filePath, structName string) (SchemaSpec, bool, error) {
-	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
-	if err != nil {
-		return SchemaSpec{}, false, err
-	}
-
-	var targetStruct *ast.TypeSpec
-	var structDoc *ast.CommentGroup
-
-	// Find the struct declaration
-	ast.Inspect(node, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.GenDecl:
-			for _, spec := range x.Specs {
-				if typeSpec, ok := spec.(*ast.TypeSpec); ok {
-					if typeSpec.Name.Name == structName {
-						targetStruct = typeSpec
-						structDoc = x.Doc
-						return false
-					}
-				}
-			}
-		}
-		return true
-	})
-
-	if targetStruct == nil {
-		return SchemaSpec{}, false, nil
-	}
-
-	// Parse the struct
-	structType, ok := targetStruct.Type.(*ast.StructType)
-	if !ok {
-		return SchemaSpec{}, false, fmt.Errorf("not a struct type")
-	}
-
-	schema := r.parseStruct(structType, structDoc)
-	return schema, true, nil
-}
-
 // parseStruct parses a struct and generates a schema
 func (r *TypeResolver) parseStruct(structType *ast.StructType, doc *ast.CommentGroup) SchemaSpec {
 	schema := SchemaSpec{
@@ -529,12 +487,12 @@ func (r *TypeResolver) tryExtractEnumValues(fileNode *ast.File, typeName string)
 			// Extract the value(s)
 			for _, value := range valueSpec.Values {
 				if basicLit, ok := value.(*ast.BasicLit); ok {
-					// String literal
-					if basicLit.Kind == token.STRING {
+					switch basicLit.Kind {
+					case token.STRING:
 						if unquoted, err := strconv.Unquote(basicLit.Value); err == nil {
 							enumValues = append(enumValues, unquoted)
 						}
-					} else if basicLit.Kind == token.INT {
+					case token.INT:
 						// Integer literal
 						if intVal, err := strconv.Atoi(basicLit.Value); err == nil {
 							enumValues = append(enumValues, intVal)

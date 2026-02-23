@@ -540,9 +540,7 @@ func normalizePath(groupPath, endpointPath string) string {
 		return groupPath
 	}
 
-	if strings.HasSuffix(groupPath, "/") {
-		groupPath = strings.TrimSuffix(groupPath, "/")
-	}
+	groupPath = strings.TrimSuffix(groupPath, "/")
 
 	if !strings.HasPrefix(endpointPath, "/") {
 		endpointPath = "/" + endpointPath
@@ -555,35 +553,3 @@ func normalizePath(groupPath, endpointPath string) string {
 	return groupPath + endpointPath
 }
 
-// extractMiddlewareName extracts middleware function name from an AST expression (legacy function for compatibility)
-func extractMiddlewareName(expr ast.Expr) string {
-	switch x := expr.(type) {
-	case *ast.Ident:
-		// Simple identifier
-		return x.Name
-	case *ast.CallExpr:
-		// Function call - extract the function name
-		if ident, ok := x.Fun.(*ast.Ident); ok {
-			return ident.Name + "()"
-		}
-		if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
-			// Method call like gates.IsAuthenticated.Authenticated()
-			if nestedSel, ok := sel.X.(*ast.SelectorExpr); ok {
-				if ident, ok := nestedSel.X.(*ast.Ident); ok {
-					return fmt.Sprintf("%s.%s.%s()", ident.Name, nestedSel.Sel.Name, sel.Sel.Name)
-				}
-			}
-			// Simple method call like obj.Method()
-			if ident, ok := sel.X.(*ast.Ident); ok {
-				return fmt.Sprintf("%s.%s()", ident.Name, sel.Sel.Name)
-			}
-			return sel.Sel.Name + "()"
-		}
-	case *ast.SelectorExpr:
-		// Method reference without call
-		if ident, ok := x.X.(*ast.Ident); ok {
-			return fmt.Sprintf("%s.%s", ident.Name, x.Sel.Name)
-		}
-	}
-	return ""
-}

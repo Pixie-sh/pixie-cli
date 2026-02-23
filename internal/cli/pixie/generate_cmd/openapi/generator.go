@@ -3,7 +3,6 @@ package openapi
 import (
 	"fmt"
 	"strings"
-	"unicode"
 )
 
 // OpenAPISpec represents the complete OpenAPI 3.0 specification
@@ -432,20 +431,6 @@ func (s *OpenAPISpec) generateTagDescription(tagName, _ string) string {
 	// For path-based tags, generate a description based on the tag name
 	// The tag name is already formatted (e.g., "Orders", "Onboarding", "User Profiles")
 	return fmt.Sprintf("%s related endpoints", tagName)
-}
-
-// titleCase capitalizes the first letter of each word in the string.
-// Replaces the deprecated strings.Title.
-func titleCase(s string) string {
-	prev := ' '
-	return strings.Map(func(r rune) rune {
-		if unicode.IsSpace(rune(prev)) || prev == ' ' {
-			prev = r
-			return unicode.ToTitle(r)
-		}
-		prev = r
-		return r
-	}, s)
 }
 
 // resolveSchemas resolves and adds schemas from endpoint

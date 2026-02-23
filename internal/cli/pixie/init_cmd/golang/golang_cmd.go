@@ -161,8 +161,12 @@ Examples:
 	cmd.Flags().Bool("with-cli", true, "Generate CLI tool for the project")
 
 	// Mark required flags
-	cmd.MarkFlagRequired("name")
-	cmd.MarkFlagRequired("module")
+	if err := cmd.MarkFlagRequired("name"); err != nil {
+		panic(fmt.Sprintf("Failed to mark 'name' flag as required: %v", err))
+	}
+	if err := cmd.MarkFlagRequired("module"); err != nil {
+		panic(fmt.Sprintf("Failed to mark 'module' flag as required: %v", err))
+	}
 
 	return cmd
 }
@@ -731,7 +735,7 @@ func generateFileFromTemplate(templateFile, outputPath string, data TemplateData
 	if err != nil {
 		return errors.Wrap(err, "failed to create output file")
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if err := tmpl.Execute(file, data); err != nil {
 		return errors.Wrap(err, "failed to execute template")

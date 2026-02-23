@@ -508,8 +508,8 @@ func (ac *analyzerContext) analyzeCallExpr(call *ast.CallExpr, spec *EndpointSpe
 
 	methodName := sel.Sel.Name
 
-	switch {
-	case methodName == "Params" || methodName == "ParamsUID" || methodName == "ParamsUint64" || methodName == "ParamsInt":
+	switch methodName {
+	case "Params", "ParamsUID", "ParamsUint64", "ParamsInt":
 		// Extract path parameter: ctx.Params("param_name"), http.ParamsUID(ctx, "param_name"), etc.
 		if len(call.Args) > 0 {
 			// For http.ParamsUID, http.ParamsUint64, etc., the parameter name is in the second argument
@@ -532,7 +532,7 @@ func (ac *analyzerContext) analyzeCallExpr(call *ast.CallExpr, spec *EndpointSpe
 			}
 		}
 
-	case methodName == "DeserializeFromFn":
+	case "DeserializeFromFn":
 		// Extract request body: serializer.DeserializeFromFn(ctx.BodyParser, &req)
 		if len(call.Args) >= 2 {
 			if reqType := ac.extractTypeFromUnaryExpr(call.Args[1], varTypes); reqType != "" {
@@ -549,15 +549,15 @@ func (ac *analyzerContext) analyzeCallExpr(call *ast.CallExpr, spec *EndpointSpe
 			}
 		}
 
-	case methodName == "Response":
+	case "Response":
 		// Extract response: http.Response(ctx, data) or http.Response(ctx, statusCode, data) or http.Response(ctx, statusCode)
 		// When 3 args: first is ctx, second is status code (int), third is data
 		// When 2 args with int: http.Response(ctx, statusCode) - returns {"data": "Ok"}
 		// When 2 args without int: http.Response(ctx, data) - returns {"data": <data>}
 		if len(call.Args) >= 2 {
-			var statusCode string = "200"
-			var hasData bool = true
-			var dataArgIndex int = 1
+			statusCode := "200"
+			hasData := true
+			dataArgIndex := 1
 
 			if len(call.Args) >= 3 && ac.isIntegerLiteral(call.Args[1]) {
 				// http.Response(ctx, statusCode, data)
@@ -632,7 +632,7 @@ func (ac *analyzerContext) analyzeCallExpr(call *ast.CallExpr, spec *EndpointSpe
 			}
 		}
 
-	case methodName == "ParseQueryParameters":
+	case "ParseQueryParameters":
 		// Detected query parameters
 		spec.Parameters = append(spec.Parameters, ParameterSpec{
 			Name:        "query",
@@ -644,7 +644,7 @@ func (ac *analyzerContext) analyzeCallExpr(call *ast.CallExpr, spec *EndpointSpe
 			},
 		})
 
-	case methodName == "APIError":
+	case "APIError":
 		// Error response
 		if _, exists := spec.Responses["400"]; !exists {
 			spec.Responses["400"] = ResponseSpec{

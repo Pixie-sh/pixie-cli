@@ -68,7 +68,9 @@ Examples:
 	cmd.Flags().Bool("force", false, "Force overwrite existing files")
 
 	// Mark required flags
-	cmd.MarkFlagRequired("name")
+	if err := cmd.MarkFlagRequired("name"); err != nil {
+		panic(fmt.Sprintf("Failed to mark flag as required: %v", err))
+	}
 
 	return cmd
 }
