@@ -141,3 +141,30 @@ type UserProfile struct {
 type UpdateUserProfileResponse struct {
 	UserProfile
 }
+
+{{if .Features.google_oauth}}
+// ======== Google OAuth DTOs ========
+
+type GoogleAuthInitiateResponse struct {
+	AuthURL string `json:"auth_url"`
+}
+
+type GoogleLinkedAccountResponse struct {
+	GoogleID   string    `json:"google_id"`
+	Email      string    `json:"email"`
+	Name       string    `json:"name"`
+	PictureURL string    `json:"picture_url"`
+	LinkedAt   time.Time `json:"linked_at"`
+}
+
+type GoogleAuthCallbackRequest struct {
+	Code    string                                `json:"code" validate:"required"`
+	State   string                                `json:"state" validate:"required"`
+	Channel session_manager_models.SessionChannel `json:"channel" validate:"required,isEnum:SessionChannel"`
+}
+
+type GoogleLinkCallbackRequest struct {
+	Code  string `json:"code" validate:"required"`
+	State string `json:"state" validate:"required"`
+}
+{{end}}

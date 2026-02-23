@@ -1,0 +1,283 @@
+package authentication_services
+
+import (
+	"context"
+	goErrors "errors"
+	"strings"
+
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/core-go/pkg/errors/db_errors"
+	"github.com/pixie-sh/core-go/pkg/services"
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/errors-go"
+	"github.com/pixie-sh/logger-go/logger"
+	"gorm.io/gorm"
+
+	internaldi "{{ .ModuleName }}/infra/di"
+	"{{ .ModuleName }}/infra/apis"
+	data "{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_entities"
+	projectErrors "{{ .ModuleName }}/pkg/errors"
+)
+
+// GoogleAuthServiceConfiguration holds configuration for the Google Auth service
+type GoogleAuthServiceConfiguration struct {
+	AuthDataLayerConfiguration data.AuthenticationDataLayerConfiguration `json:"auth_data_layer"`
+	GoogleOAuthAPIConfiguration apis.GoogleOAuthAPIConfiguration         `json:"google_oauth_api"`
+}
+
+func (g GoogleAuthServiceConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(g, lookupPath)
+}
+
+// GoogleAuthService handles Google authentication business logic at the service level
+type GoogleAuthService struct {
+	services.Service[GoogleAuthService]
+
+	config    *GoogleAuthServiceConfiguration
+	dataLayer *data.AuthenticationDataLayer
+	oauthAPI  *apis.GoogleOAuthAPI
+}
+
+func RegistryGoogleAuthServiceConfiguration(ctx di.Context, opts *di.RegistryOpts) (*GoogleAuthServiceConfiguration, error) {
+	return di.ConfigurationLookup[*GoogleAuthServiceConfiguration](ctx, opts)
+}
+
+func RegistryGoogleAuthService(ctx di.Context, opts *di.RegistryOpts) (*GoogleAuthService, error) {
+	cfg, err := di.CreateConfiguration[*GoogleAuthServiceConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		return nil, err
+	}
+
+	dataLayer, err := di.Create[*data.AuthenticationDataLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenAuthenticationDataLayer))
+	if err != nil {
+		return nil, err
+	}
+
+	oauthAPI, err := di.Create[*apis.GoogleOAuthAPI](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenGoogleOAuthAPI))
+	if err != nil {
+		return nil, err
+	}
+
+	return NewGoogleAuthService(ctx, cfg, dataLayer, oauthAPI)
+}
+
+// NewGoogleAuthService creates a new GoogleAuthService instance
+func NewGoogleAuthService(
+	_ context.Context,
+	config *GoogleAuthServiceConfiguration,
+	dataLayer *data.AuthenticationDataLayer,
+	oauthAPI *apis.GoogleOAuthAPI,
+) (*GoogleAuthService, error) {
+	s := GoogleAuthService{
+		config:    config,
+		dataLayer: dataLayer,
+		oauthAPI:  oauthAPI,
+	}
+
+	s.Service = services.NewService(&s, NewGoogleAuthServiceFrom)
+	return &s, nil
+}
+
+// NewGoogleAuthServiceFrom creates a transactional copy of GoogleAuthService
+func NewGoogleAuthServiceFrom(service services.Service[GoogleAuthService]) (*GoogleAuthService, *services.Service[GoogleAuthService]) {
+	s := &GoogleAuthService{}
+	s.config = service.Instance.config
+	s.dataLayer = service.Instance.dataLayer
+	s.oauthAPI = service.Instance.oauthAPI
+	s.Service = services.NewService(s, nil)
+
+	return s, &s.Service
+}
+
+// GenerateAuthURL generates a Google OAuth consent URL
+func (s GoogleAuthService) GenerateAuthURL(stateData apis.GoogleOAuthStateData) (string, error) {
+	return s.oauthAPI.GetConsentURL(stateData)
+}
+
+// ValidateGoogleCallback validates the OAuth callback and returns user info
+func (s GoogleAuthService) ValidateGoogleCallback(ctx context.Context, code string, state string) (*apis.GoogleUserInfo, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	// Validate state (CSRF protection)
+	_, err := s.oauthAPI.ValidateState(state)
+	if err != nil {
+		log.With("error", err).Warn("invalid Google OAuth state")
+		return nil, err
+	}
+
+	// Exchange code for tokens
+	tokenResp, err := s.oauthAPI.ExchangeCode(ctx, code)
+	if err != nil {
+		log.With("error", err).Error("failed to exchange Google OAuth code")
+		return nil, err
+	}
+
+	// Get user info
+	userInfo, err := s.oauthAPI.GetUserInfo(ctx, tokenResp.AccessToken)
+	if err != nil {
+		log.With("error", err).Error("failed to get Google user info")
+		return nil, err
+	}
+
+	return userInfo, nil
+}
+
+// ResolveOrCreateUser finds an existing user by Google ID or email, or creates a new one
+func (s GoogleAuthService) ResolveOrCreateUser(ctx context.Context, userInfo *apis.GoogleUserInfo) (auth_entities.User, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	repo := s.dataLayer.GoogleAccountRepository
+	userRepo := s.dataLayer.UserRepository
+	if !s.TxNil() {
+		repo = s.dataLayer.GoogleAccountRepository.WithTx(s.Tx)
+		userRepo = s.dataLayer.UserRepository.WithTx(s.Tx)
+	}
+
+	// 1. Try to find by Google ID
+	googleAccount, err := repo.FindByGoogleID(userInfo.Sub)
+	if err == nil {
+		// Found existing Google account link
+		user, err := userRepo.FindUserByID(googleAccount.UserID)
+		if err != nil {
+			log.With("error", err).With("user_id", googleAccount.UserID).Error("failed to find user for existing Google link")
+			return auth_entities.User{}, db_errors.Handle(err)
+		}
+		return user, nil
+	}
+
+	if !goErrors.Is(err, gorm.ErrRecordNotFound) {
+		return auth_entities.User{}, db_errors.Handle(err)
+	}
+
+	// 2. Try to find by email
+	emailLower := strings.ToLower(userInfo.Email)
+	user, err := userRepo.FindUserByEmail(emailLower)
+	if err == nil {
+		// Found existing user by email — link Google account
+		googleAccount := &auth_entities.GoogleAccount{
+			UserID:     user.ID,
+			GoogleID:   userInfo.Sub,
+			Email:      userInfo.Email,
+			Name:       userInfo.Name,
+			PictureURL: userInfo.Picture,
+		}
+		if linkErr := repo.LinkToUser(googleAccount); linkErr != nil {
+			log.With("error", linkErr).Warn("failed to auto-link Google account to existing user")
+		}
+		return user, nil
+	}
+
+	if !goErrors.Is(err, gorm.ErrRecordNotFound) {
+		return auth_entities.User{}, db_errors.Handle(err)
+	}
+
+	// 3. Create new user
+	newUser := auth_entities.User{
+		ID:           uid.New(),
+		EmailAddress: emailLower,
+		FullName:     userInfo.Name,
+		UserType:     auth_entities.UserType,
+		Status:       "Active",
+	}
+
+	if err := userRepo.Create(&newUser); err != nil {
+		log.With("error", err).Error("failed to create user from Google OAuth")
+		return auth_entities.User{}, db_errors.Handle(err)
+	}
+
+	// Link Google account to new user
+	newGoogleAccount := auth_entities.GoogleAccount{
+		UserID:     newUser.ID,
+		GoogleID:   userInfo.Sub,
+		Email:      userInfo.Email,
+		Name:       userInfo.Name,
+		PictureURL: userInfo.Picture,
+	}
+	if err := repo.Create(&newGoogleAccount); err != nil {
+		log.With("error", err).Error("failed to link Google account to new user")
+		return auth_entities.User{}, db_errors.Handle(err)
+	}
+
+	logger.With("user_id", newUser.ID).With("google_id", userInfo.Sub).Debug("created new user from Google OAuth")
+
+	return newUser, nil
+}
+
+// LinkGoogleAccount links a Google account to an existing user
+func (s GoogleAuthService) LinkGoogleAccount(ctx context.Context, userID uid.UID, userInfo *apis.GoogleUserInfo) error {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	repo := s.dataLayer.GoogleAccountRepository
+	if !s.TxNil() {
+		repo = s.dataLayer.GoogleAccountRepository.WithTx(s.Tx)
+	}
+
+	// Check if this Google account is already linked to another user
+	existing, err := repo.FindByGoogleID(userInfo.Sub)
+	if err == nil && existing.UserID != userID {
+		return errors.New("Google account already linked to another user").WithErrorCode(projectErrors.GoogleAccountAlreadyLinked)
+	}
+
+	account := &auth_entities.GoogleAccount{
+		UserID:     userID,
+		GoogleID:   userInfo.Sub,
+		Email:      userInfo.Email,
+		Name:       userInfo.Name,
+		PictureURL: userInfo.Picture,
+	}
+
+	if err := repo.LinkToUser(account); err != nil {
+		log.With("error", err).Error("failed to link Google account")
+		return db_errors.Handle(err)
+	}
+
+	return nil
+}
+
+// UnlinkGoogleAccount removes the Google account link for a user
+func (s GoogleAuthService) UnlinkGoogleAccount(_ context.Context, userID uid.UID) error {
+	repo := s.dataLayer.GoogleAccountRepository
+	if !s.TxNil() {
+		repo = s.dataLayer.GoogleAccountRepository.WithTx(s.Tx)
+	}
+
+	return repo.DeleteByUserID(userID)
+}
+
+// IsGoogleAccountLinked checks if a user has a linked Google account
+func (s GoogleAuthService) IsGoogleAccountLinked(_ context.Context, userID uid.UID) (bool, error) {
+	repo := s.dataLayer.GoogleAccountRepository
+	if !s.TxNil() {
+		repo = s.dataLayer.GoogleAccountRepository.WithTx(s.Tx)
+	}
+
+	_, err := repo.FindByUserID(userID)
+	if err != nil {
+		if goErrors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, db_errors.Handle(err)
+	}
+
+	return true, nil
+}
+
+// GetLinkedGoogleAccount returns the linked Google account for a user
+func (s GoogleAuthService) GetLinkedGoogleAccount(_ context.Context, userID uid.UID) (*auth_entities.GoogleAccount, error) {
+	repo := s.dataLayer.GoogleAccountRepository
+	if !s.TxNil() {
+		repo = s.dataLayer.GoogleAccountRepository.WithTx(s.Tx)
+	}
+
+	account, err := repo.FindByUserID(userID)
+	if err != nil {
+		if goErrors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("no Google account linked").WithErrorCode(projectErrors.GoogleAccountNotLinkedCode)
+		}
+		return nil, db_errors.Handle(err)
+	}
+
+	return &account, nil
+}

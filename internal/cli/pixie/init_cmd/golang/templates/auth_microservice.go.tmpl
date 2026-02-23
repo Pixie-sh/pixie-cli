@@ -27,6 +27,9 @@ type AuthenticationMicroserviceConfiguration struct {
 	authentication_business_layer.PasswordBusinessLayerConfiguration       `json:"password_business_layer"`
 	authentication_business_layer.RegistrationBusinessLayerConfiguration   `json:"registration_business_layer"`
 	authentication_business_layer.UserProfileBusinessLayerConfiguration    `json:"user_profile_business_layer"`
+	{{- if .Features.google_oauth}}
+	authentication_business_layer.GoogleAuthBusinessLayerConfiguration     `json:"google_auth_business_layer"`
+	{{- end}}
 
 	ListenAddr        string `json:"listen_addr"`
 	ListenMetricsAddr string `json:"listen_metrics_addr"`
@@ -47,11 +50,17 @@ type AuthenticationMicroservice struct {
 	passwordBusiness     *authentication_business_layer.PasswordBusinessLayer
 	registrationBusiness *authentication_business_layer.RegistrationBusinessLayer
 	userProfileBusiness  *authentication_business_layer.UserProfileBusinessLayer
+	{{- if .Features.google_oauth}}
+	googleAuthBusiness   *authentication_business_layer.GoogleAuthBusinessLayer
+	{{- end}}
 	gates                *bundles.AuthorizationGatesBundle
 
 	//non di
-	controllers   httpControllers
-	boControllers httpBoControllers
+	controllers          httpControllers
+	boControllers        httpBoControllers
+	{{- if .Features.google_oauth}}
+	googleControllers    googleAuthControllers
+	{{- end}}
 }
 
 func RegistryAuthenticationMicroserviceConfiguration(dictx di.Context, opts *di.RegistryOpts) (*AuthenticationMicroserviceConfiguration, error) {
@@ -99,6 +108,13 @@ func RegistryAuthenticationMicroservice(ctx di.Context, opts *di.RegistryOpts) (
 		return nil, err
 	}
 
+	{{- if .Features.google_oauth}}
+	googleAuthBusiness, err := di.Create[*authentication_business_layer.GoogleAuthBusinessLayer](ctx, di.WithOpts(opts), di.WithToken(internaldi.RegistryTokenGoogleAuthBusinessLayer))
+	if err != nil {
+		return nil, err
+	}
+	{{- end}}
+
 	return NewAuthenticationMicroservice(
 		ctx,
 		cfg,
@@ -108,6 +124,9 @@ func RegistryAuthenticationMicroservice(ctx di.Context, opts *di.RegistryOpts) (
 		passwordBusiness,
 		registrationBusiness,
 		userProfileBusiness,
+		{{- if .Features.google_oauth}}
+		googleAuthBusiness,
+		{{- end}}
 	)
 }
 
@@ -120,6 +139,9 @@ func NewAuthenticationMicroservice(
 	passwordBusiness *authentication_business_layer.PasswordBusinessLayer,
 	registrationBusiness *authentication_business_layer.RegistrationBusinessLayer,
 	userProfileBusiness *authentication_business_layer.UserProfileBusinessLayer,
+	{{- if .Features.google_oauth}}
+	googleAuthBusiness *authentication_business_layer.GoogleAuthBusinessLayer,
+	{{- end}}
 ) (*AuthenticationMicroservice, error) {
 	ms := &AuthenticationMicroservice{
 		ctx:                  ctx,
@@ -130,6 +152,9 @@ func NewAuthenticationMicroservice(
 		passwordBusiness:     passwordBusiness,
 		registrationBusiness: registrationBusiness,
 		userProfileBusiness:  userProfileBusiness,
+		{{- if .Features.google_oauth}}
+		googleAuthBusiness:   googleAuthBusiness,
+		{{- end}}
 		gates:                gates,
 		controllers: httpControllers{
 			server:               bundle.Server,
@@ -144,6 +169,13 @@ func NewAuthenticationMicroservice(
 			gates:         gates,
 			businessLayer: businessLayer,
 		},
+		{{- if .Features.google_oauth}}
+		googleControllers: googleAuthControllers{
+			server:             bundle.Server,
+			gates:              gates,
+			googleAuthBusiness: googleAuthBusiness,
+		},
+		{{- end}}
 	}
 
 	return ms, ms.Setup()
@@ -161,6 +193,13 @@ func (m *AuthenticationMicroservice) Setup() error {
 	if err != nil {
 		return err
 	}
+
+	{{- if .Features.google_oauth}}
+	err = m.googleControllers.SetupHTTP()
+	if err != nil {
+		return err
+	}
+	{{- end}}
 
 	return m.boControllers.SetupHTTP()
 }

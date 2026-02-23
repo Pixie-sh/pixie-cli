@@ -45,6 +45,30 @@
     }
   },
   {{- end}}
+  {{- if .Features.google_oauth}}
+  "google_auth_business_layer": {
+    "auth_data_layer": {
+      "database_orm": "${#ref.database_orm}"
+    },
+    "google_auth_service": {
+      "auth_data_layer": {
+        "database_orm": "${#ref.database_orm}"
+      },
+      "google_oauth_api": {
+        "client_id": "${env.GOOGLE_OAUTH_CLIENT_ID}",
+        "client_secret": "${env.GOOGLE_OAUTH_CLIENT_SECRET}",
+        "redirect_uri": "${env.GOOGLE_OAUTH_REDIRECT_URI}",
+        "scopes": ["openid", "email", "profile"],
+        "state_secret": "${env.GOOGLE_OAUTH_STATE_SECRET}"
+      }
+    },
+    "auth_login_service": {
+      "auth_data_layer": {
+        "database_orm": "${#ref.database_orm}"
+      }
+    }
+  },
+  {{- end}}
     {{- if .Features.database}}
     "{{.DomainName}}_business_layer": {
       "{{.DomainName}}_data_layer": {

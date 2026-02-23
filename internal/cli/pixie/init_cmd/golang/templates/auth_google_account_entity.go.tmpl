@@ -1,0 +1,26 @@
+package auth_entities
+
+import (
+	"time"
+
+	"github.com/pixie-sh/core-go/pkg/uid"
+)
+
+// GoogleAccount represents a linked Google OAuth account for a user
+type GoogleAccount struct {
+	ID         uint    `gorm:"primaryKey;autoIncrement"`
+	UserID     uid.UID `gorm:"type:uuid;not null;index:idx_google_accounts_user_id"`
+	GoogleID   string  `gorm:"type:text;not null;uniqueIndex:idx_google_accounts_google_id"`
+	Email      string  `gorm:"type:text;not null"`
+	Name       string  `gorm:"type:text"`
+	PictureURL string  `gorm:"type:text"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+
+	User User `gorm:"foreignKey:UserID;references:ID"`
+}
+
+func (GoogleAccount) TableName() string {
+	return "google_accounts"
+}

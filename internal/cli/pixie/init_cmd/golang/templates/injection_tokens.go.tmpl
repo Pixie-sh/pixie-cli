@@ -38,6 +38,15 @@ var (
 )
 {{end}}
 
+// Google OAuth domain tokens
+{{if .Features.google_oauth}}
+var (
+	RegistryTokenGoogleOAuthAPI            = pdi.RegisterInjectionToken("google_oauth_api")
+	RegistryTokenGoogleAuthService         = pdi.RegisterInjectionToken("google_auth_service")
+	RegistryTokenGoogleAuthBusinessLayer   = pdi.RegisterInjectionToken("google_auth_business_layer")
+)
+{{end}}
+
 // Notifications domain tokens
 {{if or .Features.events .Features.notifications}}
 var (

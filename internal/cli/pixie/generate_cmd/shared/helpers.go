@@ -153,6 +153,7 @@ func ResolveFeatureDependencies(features map[string]bool) map[string]bool {
 		"backoffice":    {"auth"},
 		"events":        {"cache"},
 		"notifications": {"events"},
+		"google_oauth":  {"auth"},
 	}
 
 	for {

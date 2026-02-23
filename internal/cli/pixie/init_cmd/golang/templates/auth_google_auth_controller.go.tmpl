@@ -1,0 +1,88 @@
+package ms_authentication
+
+import (
+	"github.com/pixie-sh/core-go/pkg/comm/http"
+	"github.com/pixie-sh/core-go/pkg/models/serializer"
+
+	"{{ .ModuleName }}/bundles"
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_business_layer"
+	httpcontext "{{ .ModuleName }}/pkg/context/http"
+	"{{ .ModuleName }}/pkg/models/auth"
+	"{{ .ModuleName }}/pkg/models/session_manager_models"
+)
+
+type googleAuthControllers struct {
+	server             http.Server
+	gates              *bundles.AuthorizationGatesBundle
+	googleAuthBusiness *authentication_business_layer.GoogleAuthBusinessLayer
+}
+
+func (c googleAuthControllers) SetupHTTP() error {
+	authGroup := c.server.Group("/authentication")
+
+	// Public routes (no auth required)
+	authGroup.Get("/auth/google", c.gates.IsAuthenticated.NotAuthenticated(), c.handleInitiateGoogleAuth)
+	authGroup.Get("/auth/google/callback", c.gates.IsAuthenticated.NotAuthenticated(), c.handleGoogleCallback)
+
+	// Protected routes (auth required)
+	authGroup.Get("/auth/google/link", c.gates.IsAuthenticated.Authenticated(), c.handleInitiateGoogleLink)
+	authGroup.Post("/auth/google/link/callback", c.gates.IsAuthenticated.Authenticated(), c.handleGoogleLinkCallback)
+	authGroup.Delete("/auth/google/linked", c.gates.IsAuthenticated.Authenticated(), c.handleUnlinkGoogleAccount)
+	authGroup.Get("/auth/google/linked", c.gates.IsAuthenticated.Authenticated(), c.handleGetLinkedGoogleAccount)
+
+	return nil
+}
+
+// handleInitiateGoogleAuth handles GET /auth/google
+func (c googleAuthControllers) handleInitiateGoogleAuth(ctx http.ServerCtx) error {
+	channel := session_manager_models.SessionChannel(ctx.Query("channel", "web"))
+
+	response, err := c.googleAuthBusiness.InitiateGoogleAuth(ctx.Context(), channel)
+	return http.Response(ctx, response, err)
+}
+
+// handleGoogleCallback handles GET /auth/google/callback
+func (c googleAuthControllers) handleGoogleCallback(ctx http.ServerCtx) error {
+	code := ctx.Query("code")
+	state := ctx.Query("state")
+	channel := session_manager_models.SessionChannel(ctx.Query("channel", "web"))
+	ip := ctx.IP()
+
+	response, err := c.googleAuthBusiness.HandleGoogleCallback(ctx.Context(), code, state, channel, ip)
+	return http.Response(ctx, response, err)
+}
+
+// handleInitiateGoogleLink handles GET /auth/google/link
+func (c googleAuthControllers) handleInitiateGoogleLink(ctx http.ServerCtx) error {
+	response, err := c.googleAuthBusiness.InitiateGoogleLink(ctx.Context())
+	return http.Response(ctx, response, err)
+}
+
+// handleGoogleLinkCallback handles POST /auth/google/link/callback
+func (c googleAuthControllers) handleGoogleLinkCallback(ctx http.ServerCtx) error {
+	var req auth.GoogleLinkCallbackRequest
+	if err := serializer.DeserializeFromFn(ctx.BodyParser, &req); err != nil {
+		return http.Response(ctx, err)
+	}
+
+	jwt := httpcontext.GetCtxJWT(ctx)
+
+	err := c.googleAuthBusiness.HandleGoogleLinkCallback(ctx.Context(), jwt.User.ID, req.Code, req.State)
+	return http.Response(ctx, err)
+}
+
+// handleUnlinkGoogleAccount handles DELETE /auth/google/linked
+func (c googleAuthControllers) handleUnlinkGoogleAccount(ctx http.ServerCtx) error {
+	jwt := httpcontext.GetCtxJWT(ctx)
+
+	err := c.googleAuthBusiness.UnlinkGoogleAccount(ctx.Context(), jwt.User.ID)
+	return http.Response(ctx, err)
+}
+
+// handleGetLinkedGoogleAccount handles GET /auth/google/linked
+func (c googleAuthControllers) handleGetLinkedGoogleAccount(ctx http.ServerCtx) error {
+	jwt := httpcontext.GetCtxJWT(ctx)
+
+	response, err := c.googleAuthBusiness.GetLinkedGoogleAccount(ctx.Context(), jwt.User.ID)
+	return http.Response(ctx, response, err)
+}

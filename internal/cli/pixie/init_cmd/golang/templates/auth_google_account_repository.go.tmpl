@@ -1,0 +1,90 @@
+package auth_repositories
+
+import (
+	"github.com/pixie-sh/core-go/pkg/uid"
+	"github.com/pixie-sh/database-helpers-go/database"
+
+	"{{ .ModuleName }}/internal/domains/authentication/authentication_data_layer/auth_entities"
+)
+
+// GoogleAccountRepository handles CRUD operations for Google accounts
+type GoogleAccountRepository struct {
+	database.Repository[GoogleAccountRepository]
+}
+
+// NewGoogleAccountRepository creates a new GoogleAccountRepository
+func NewGoogleAccountRepository(db *database.DB) GoogleAccountRepository {
+	return GoogleAccountRepository{database.NewRepository(db, NewGoogleAccountRepository)}
+}
+
+// Create creates a new Google account record
+func (r GoogleAccountRepository) Create(account *auth_entities.GoogleAccount) error {
+	return r.DB.Create(account).Error
+}
+
+// FindByGoogleID finds a Google account by its Google ID
+func (r GoogleAccountRepository) FindByGoogleID(googleID string) (auth_entities.GoogleAccount, error) {
+	var account auth_entities.GoogleAccount
+	err := r.DB.Where("google_id = ?", googleID).First(&account).Error
+	return account, err
+}
+
+// FindByEmail finds a Google account by email
+func (r GoogleAccountRepository) FindByEmail(email string) (auth_entities.GoogleAccount, error) {
+	var account auth_entities.GoogleAccount
+	err := r.DB.Where("email = ?", email).First(&account).Error
+	return account, err
+}
+
+// FindByUserID finds a Google account by user ID
+func (r GoogleAccountRepository) FindByUserID(userID uid.UID) (auth_entities.GoogleAccount, error) {
+	var account auth_entities.GoogleAccount
+	err := r.DB.Where("user_id = ?", userID).First(&account).Error
+	return account, err
+}
+
+// Update updates an existing Google account
+func (r GoogleAccountRepository) Update(account *auth_entities.GoogleAccount) error {
+	return r.DB.Save(account).Error
+}
+
+// Delete deletes a Google account by ID
+func (r GoogleAccountRepository) Delete(id uint) error {
+	return r.DB.Delete(&auth_entities.GoogleAccount{}, id).Error
+}
+
+// DeleteByUserID deletes all Google accounts for a user
+func (r GoogleAccountRepository) DeleteByUserID(userID uid.UID) error {
+	return r.DB.Where("user_id = ?", userID).Delete(&auth_entities.GoogleAccount{}).Error
+}
+
+// LinkToUser creates or updates a Google account link for a user (upsert)
+func (r GoogleAccountRepository) LinkToUser(account *auth_entities.GoogleAccount) error {
+	var existing auth_entities.GoogleAccount
+	err := r.DB.Where("user_id = ?", account.UserID).First(&existing).Error
+	if err != nil {
+		// No existing link, create new
+		return r.DB.Create(account).Error
+	}
+
+	// Update existing link
+	existing.GoogleID = account.GoogleID
+	existing.Email = account.Email
+	existing.Name = account.Name
+	existing.PictureURL = account.PictureURL
+	return r.DB.Save(&existing).Error
+}
+
+// ExistsByGoogleID checks if a Google account exists by Google ID
+func (r GoogleAccountRepository) ExistsByGoogleID(googleID string) (bool, error) {
+	var count int64
+	err := r.DB.Model(&auth_entities.GoogleAccount{}).Where("google_id = ?", googleID).Count(&count).Error
+	return count > 0, err
+}
+
+// IsEmailLinked checks if an email is already linked to a Google account
+func (r GoogleAccountRepository) IsEmailLinked(email string) (bool, error) {
+	var count int64
+	err := r.DB.Model(&auth_entities.GoogleAccount{}).Where("email = ?", email).Count(&count).Error
+	return count > 0, err
+}

@@ -1,0 +1,251 @@
+package apis
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	pixiecontext "github.com/pixie-sh/core-go/pkg/context"
+	"github.com/pixie-sh/di-go"
+	"github.com/pixie-sh/errors-go"
+	"github.com/pixie-sh/logger-go/logger"
+
+	internaldi "{{ .ModuleName }}/infra/di"
+	projectErrors "{{ .ModuleName }}/pkg/errors"
+)
+
+const (
+	googleAuthURL     = "https://accounts.google.com/o/oauth2/v2/auth"
+	googleTokenURL    = "https://oauth2.googleapis.com/token"
+	googleUserInfoURL = "https://www.googleapis.com/oauth2/v3/userinfo"
+)
+
+// GoogleOAuthAPIConfiguration holds configuration for the Google OAuth API client
+type GoogleOAuthAPIConfiguration struct {
+	ClientID     string   `json:"client_id"`
+	ClientSecret string   `json:"client_secret"`
+	RedirectURI  string   `json:"redirect_uri"`
+	Scopes       []string `json:"scopes"`
+	StateSecret  string   `json:"state_secret"`
+}
+
+func (g GoogleOAuthAPIConfiguration) LookupNode(lookupPath string) (any, error) {
+	return di.ConfigurationNodeLookup(g, lookupPath)
+}
+
+// GoogleOAuthStateData represents the state data encoded in the OAuth state parameter
+type GoogleOAuthStateData struct {
+	CSRFToken   string `json:"csrf_token"`
+	RedirectURI string `json:"redirect_uri"`
+	Nonce       string `json:"nonce"`
+	Intent      string `json:"intent"` // "login" or "link"
+}
+
+// GoogleTokenResponse represents the response from Google's token endpoint
+type GoogleTokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	IDToken      string `json:"id_token,omitempty"`
+	Scope        string `json:"scope"`
+}
+
+// GoogleUserInfo represents the user info returned by Google
+type GoogleUserInfo struct {
+	Sub           string `json:"sub"` // Google ID
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
+	Name          string `json:"name"`
+	GivenName     string `json:"given_name"`
+	FamilyName    string `json:"family_name"`
+	Picture       string `json:"picture"`
+}
+
+// GoogleOAuthAPI handles Google OAuth 2.0 operations
+type GoogleOAuthAPI struct {
+	config *GoogleOAuthAPIConfiguration
+	client *http.Client
+}
+
+func RegistryGoogleOAuthAPIConfiguration(ctx di.Context, opts *di.RegistryOpts) (*GoogleOAuthAPIConfiguration, error) {
+	return di.ConfigurationLookup[*GoogleOAuthAPIConfiguration](ctx, opts)
+}
+
+func RegistryGoogleOAuthAPI(ctx di.Context, opts *di.RegistryOpts) (*GoogleOAuthAPI, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	cfg, err := di.CreateConfiguration[*GoogleOAuthAPIConfiguration](ctx, di.WithOpts(opts))
+	if err != nil {
+		log.With("error", err).Error("Failed to initialize config for %s!", internaldi.RegistryTokenGoogleOAuthAPI)
+		return nil, err
+	}
+
+	return NewGoogleOAuthAPI(cfg)
+}
+
+// NewGoogleOAuthAPI creates a new GoogleOAuthAPI instance
+func NewGoogleOAuthAPI(config *GoogleOAuthAPIConfiguration) (*GoogleOAuthAPI, error) {
+	if len(config.Scopes) == 0 {
+		config.Scopes = []string{"openid", "email", "profile"}
+	}
+
+	return &GoogleOAuthAPI{
+		config: config,
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}, nil
+}
+
+// GetConsentURL generates the Google OAuth consent URL with CSRF state
+func (g *GoogleOAuthAPI) GetConsentURL(stateData GoogleOAuthStateData) (string, error) {
+	stateJSON, err := json.Marshal(stateData)
+	if err != nil {
+		return "", errors.NewWithError(err, "failed to marshal state data").WithErrorCode(projectErrors.GoogleOAuthErrorCode)
+	}
+
+	signature := g.signState(stateJSON)
+	signedState := base64.URLEncoding.EncodeToString(stateJSON) + "." + base64.URLEncoding.EncodeToString(signature)
+
+	params := url.Values{
+		"client_id":     {g.config.ClientID},
+		"redirect_uri":  {g.config.RedirectURI},
+		"response_type": {"code"},
+		"scope":         {strings.Join(g.config.Scopes, " ")},
+		"state":         {signedState},
+		"access_type":   {"offline"},
+		"prompt":        {"consent"},
+	}
+
+	return fmt.Sprintf("%s?%s", googleAuthURL, params.Encode()), nil
+}
+
+// ValidateState validates the CSRF state parameter from the callback
+func (g *GoogleOAuthAPI) ValidateState(state string) (*GoogleOAuthStateData, error) {
+	parts := strings.SplitN(state, ".", 2)
+	if len(parts) != 2 {
+		return nil, errors.New("invalid state format").WithErrorCode(projectErrors.InvalidGoogleStateCode)
+	}
+
+	stateJSON, err := base64.URLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, errors.NewWithError(err, "failed to decode state data").WithErrorCode(projectErrors.InvalidGoogleStateCode)
+	}
+
+	signature, err := base64.URLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, errors.NewWithError(err, "failed to decode state signature").WithErrorCode(projectErrors.InvalidGoogleStateCode)
+	}
+
+	expectedSignature := g.signState(stateJSON)
+	if !hmac.Equal(signature, expectedSignature) {
+		return nil, errors.New("invalid state signature").WithErrorCode(projectErrors.InvalidGoogleStateCode)
+	}
+
+	var stateData GoogleOAuthStateData
+	if err := json.Unmarshal(stateJSON, &stateData); err != nil {
+		return nil, errors.NewWithError(err, "failed to unmarshal state data").WithErrorCode(projectErrors.InvalidGoogleStateCode)
+	}
+
+	return &stateData, nil
+}
+
+// ExchangeCode exchanges the authorization code for tokens
+func (g *GoogleOAuthAPI) ExchangeCode(ctx context.Context, code string) (*GoogleTokenResponse, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	data := url.Values{
+		"code":          {code},
+		"client_id":     {g.config.ClientID},
+		"client_secret": {g.config.ClientSecret},
+		"redirect_uri":  {g.config.RedirectURI},
+		"grant_type":    {"authorization_code"},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, googleTokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, errors.NewWithError(err, "failed to create token request").WithErrorCode(projectErrors.GoogleCodeExchangeErrorCode)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		log.With("error", err).Error("failed to exchange code with Google")
+		return nil, errors.NewWithError(err, "failed to exchange code with Google").WithErrorCode(projectErrors.GoogleCodeExchangeErrorCode)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.NewWithError(err, "failed to read token response").WithErrorCode(projectErrors.GoogleCodeExchangeErrorCode)
+	}
+
+	if resp.StatusCode != 200 {
+		log.With("status", resp.StatusCode).With("body", string(body)).Error("Google token exchange failed")
+		return nil, errors.New("Google token exchange failed with status %d", resp.StatusCode).WithErrorCode(projectErrors.GoogleCodeExchangeErrorCode)
+	}
+
+	var tokenResp GoogleTokenResponse
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return nil, errors.NewWithError(err, "failed to parse token response").WithErrorCode(projectErrors.GoogleCodeExchangeErrorCode)
+	}
+
+	return &tokenResp, nil
+}
+
+// GetUserInfo fetches the user's profile information from Google
+func (g *GoogleOAuthAPI) GetUserInfo(ctx context.Context, accessToken string) (*GoogleUserInfo, error) {
+	log := pixiecontext.GetCtxLogger(ctx)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, googleUserInfoURL, nil)
+	if err != nil {
+		return nil, errors.NewWithError(err, "failed to create userinfo request").WithErrorCode(projectErrors.GoogleUserInfoErrorCode)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		log.With("error", err).Error("failed to fetch user info from Google")
+		return nil, errors.NewWithError(err, "failed to fetch user info from Google").WithErrorCode(projectErrors.GoogleUserInfoErrorCode)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.NewWithError(err, "failed to read userinfo response").WithErrorCode(projectErrors.GoogleUserInfoErrorCode)
+	}
+
+	if resp.StatusCode != 200 {
+		log.With("status", resp.StatusCode).With("body", string(body)).Error("Google userinfo request failed")
+		return nil, errors.New("Google userinfo request failed with status %d", resp.StatusCode).WithErrorCode(projectErrors.GoogleUserInfoErrorCode)
+	}
+
+	var userInfo GoogleUserInfo
+	if err := json.Unmarshal(body, &userInfo); err != nil {
+		return nil, errors.NewWithError(err, "failed to parse userinfo response").WithErrorCode(projectErrors.GoogleUserInfoErrorCode)
+	}
+
+	if userInfo.Sub == "" {
+		return nil, errors.New("Google user info missing sub field").WithErrorCode(projectErrors.GoogleUserInfoErrorCode)
+	}
+
+	logger.With("google_id", userInfo.Sub).With("email", userInfo.Email).Debug("fetched Google user info")
+
+	return &userInfo, nil
+}
+
+// signState creates an HMAC-SHA256 signature for state data
+func (g *GoogleOAuthAPI) signState(data []byte) []byte {
+	mac := hmac.New(sha256.New, []byte(g.config.StateSecret))
+	mac.Write(data)
+	return mac.Sum(nil)
+}

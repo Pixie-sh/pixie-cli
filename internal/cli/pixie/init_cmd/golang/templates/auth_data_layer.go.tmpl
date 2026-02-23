@@ -28,6 +28,9 @@ type AuthenticationDataLayer struct {
 	UserRepository     auth_repositories.UserRepository
 	PasswordRepository auth_repositories.PasswordRepository
 	OTPRepository      auth_repositories.OTPRepository
+	{{- if .Features.google_oauth}}
+	GoogleAccountRepository auth_repositories.GoogleAccountRepository
+	{{- end}}
 }
 
 func NewAuthenticationDataLayer(_ context.Context, orm *database.Orm, layerConfig AuthenticationDataLayerConfiguration) (AuthenticationDataLayer, error) {
@@ -38,6 +41,9 @@ func NewAuthenticationDataLayer(_ context.Context, orm *database.Orm, layerConfi
 		UserRepository:     auth_repositories.NewUserRepository(orm.DB),
 		PasswordRepository: auth_repositories.NewPasswordRepository(orm.DB),
 		OTPRepository:      auth_repositories.NewOTPRepository(orm.DB),
+		{{- if .Features.google_oauth}}
+		GoogleAccountRepository: auth_repositories.NewGoogleAccountRepository(orm.DB),
+		{{- end}}
 	}, nil
 }
 

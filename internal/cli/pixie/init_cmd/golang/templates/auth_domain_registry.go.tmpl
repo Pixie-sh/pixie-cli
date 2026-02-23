@@ -6,6 +6,9 @@ import (
 	"github.com/pixie-sh/di-go"
 	"github.com/pixie-sh/errors-go"
 
+	{{- if .Features.google_oauth}}
+	"{{.ModuleName}}/infra/apis"
+	{{- end}}
 	internaldi "{{.ModuleName}}/infra/di"
 	"{{.ModuleName}}/internal/domains/authentication/authentication_business_layer"
 	"{{.ModuleName}}/internal/domains/authentication/authentication_data_layer"
@@ -57,5 +60,17 @@ func Registry() {
 
 		errors.Must(di.RegisterConfiguration[*authentication_services.UserOtpServiceConfiguration](authentication_services.RegistryUserOtpServiceConfiguration, di.WithToken(internaldi.RegistryTokenUserOtpService)))
 		errors.Must(di.Register[*authentication_services.UserOtpService](authentication_services.RegistryUserOtpService, di.WithToken(internaldi.RegistryTokenUserOtpService)))
+
+		{{- if .Features.google_oauth}}
+		//google oauth
+		errors.Must(di.RegisterConfiguration[*apis.GoogleOAuthAPIConfiguration](apis.RegistryGoogleOAuthAPIConfiguration, di.WithToken(internaldi.RegistryTokenGoogleOAuthAPI)))
+		errors.Must(di.Register[*apis.GoogleOAuthAPI](apis.RegistryGoogleOAuthAPI, di.WithToken(internaldi.RegistryTokenGoogleOAuthAPI)))
+
+		errors.Must(di.RegisterConfiguration[*authentication_services.GoogleAuthServiceConfiguration](authentication_services.RegistryGoogleAuthServiceConfiguration, di.WithToken(internaldi.RegistryTokenGoogleAuthService)))
+		errors.Must(di.Register[*authentication_services.GoogleAuthService](authentication_services.RegistryGoogleAuthService, di.WithToken(internaldi.RegistryTokenGoogleAuthService)))
+
+		errors.Must(di.RegisterConfiguration[*authentication_business_layer.GoogleAuthBusinessLayerConfiguration](authentication_business_layer.RegistryGoogleAuthBusinessLayerConfiguration, di.WithToken(internaldi.RegistryTokenGoogleAuthBusinessLayer)))
+		errors.Must(di.Register[*authentication_business_layer.GoogleAuthBusinessLayer](authentication_business_layer.RegistryGoogleAuthBusinessLayer, di.WithToken(internaldi.RegistryTokenGoogleAuthBusinessLayer)))
+		{{- end}}
 	})
 }

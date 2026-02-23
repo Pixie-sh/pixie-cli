@@ -315,7 +315,7 @@ func getDefaultMicroserviceConfigs(projectMSName string) []MicroserviceConfig {
 			Port:        3001,
 			MetricsPort: 3101,
 			Domains:     []string{"authentication"},
-			Features:    []string{"database", "auth", "tokens", "metrics", "e2e"},
+			Features:    []string{"database", "auth", "tokens", "metrics", "e2e", "google_oauth"},
 		},
 		{
 			Name:        "notifications",
@@ -376,6 +376,7 @@ func generateProjectInfrastructure(opts Options, domains []DomainInfo, configs [
 	hasAuth := false
 	hasEvents := false
 	hasNotifications := false
+	hasGoogleOAuth := false
 
 	for _, config := range configs {
 		for _, feature := range config.Features {
@@ -384,6 +385,9 @@ func generateProjectInfrastructure(opts Options, domains []DomainInfo, configs [
 			}
 			if feature == "events" {
 				hasEvents = true
+			}
+			if feature == "google_oauth" {
+				hasGoogleOAuth = true
 			}
 		}
 		if config.Name == "notifications" {
@@ -400,6 +404,7 @@ func generateProjectInfrastructure(opts Options, domains []DomainInfo, configs [
 			"auth":          hasAuth,
 			"events":        hasEvents,
 			"notifications": hasNotifications,
+			"google_oauth":  hasGoogleOAuth,
 		},
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
@@ -573,6 +578,14 @@ func generateAuthenticationMicroservice(data TemplateData, opts Options) error {
 		{"auth_state_machine.go.tmpl", filepath.Join(domainPath, "authentication_services/user_state_machine.go")},
 		{"auth_domain_registry.go.tmpl", filepath.Join(domainPath, "registry.go")},
 		{"auth_models.go.tmpl", filepath.Join(modelsPath, "auth_models.go")},
+		{"auth_google_oauth_api.go.tmpl", filepath.Join(basePath, "infra/apis/google_oauth_api.go")},
+		{"auth_google_auth_service.go.tmpl", filepath.Join(domainPath, "authentication_services/google_auth_service.go")},
+		{"auth_google_auth_business_layer.go.tmpl", filepath.Join(domainPath, "authentication_business_layer/google_auth_business_layer.go")},
+		{"auth_google_auth_controller.go.tmpl", filepath.Join(msPath, "google_auth_controllers.go")},
+		{"auth_google_account_entity.go.tmpl", filepath.Join(domainPath, "authentication_data_layer/auth_entities/google_account.go")},
+		{"auth_google_account_repository.go.tmpl", filepath.Join(domainPath, "authentication_data_layer/auth_repositories/google_account_repository.go")},
+		{"auth_google_accounts_migration.go.tmpl", filepath.Join(domainPath, fmt.Sprintf("authentication_data_layer/auth_migrations/%s4_add_google_accounts.go", data.MigrationTimestamp))},
+		{"auth_google_oauth_errors.go.tmpl", filepath.Join(basePath, "pkg/errors/google_oauth_errors.go")},
 		{"config.json.tmpl", filepath.Join(basePath, "misc/configs/ms_authentication.json")},
 		{"e2e_configuration.go.tmpl", filepath.Join(basePath, "internal/e2e_tests/e2e_ms_authentication_tests/configuration.go")},
 		{"e2e_bootstrap_test.go.tmpl", filepath.Join(basePath, "internal/e2e_tests/e2e_ms_authentication_tests/ms_authentication_bootstrap_test.go")},
@@ -734,6 +747,7 @@ func resolveFeatureDependencies(features map[string]bool) map[string]bool {
 		"backoffice":    {"auth"},
 		"events":        {"cache"},
 		"notifications": {"events"},
+		"google_oauth":  {"auth"},
 	}
 
 	for {

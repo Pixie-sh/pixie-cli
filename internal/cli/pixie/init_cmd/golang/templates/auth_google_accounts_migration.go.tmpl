@@ -1,0 +1,32 @@
+package auth_migrations
+
+import (
+	"github.com/pixie-sh/database-helpers-go/database"
+	"gorm.io/gorm"
+)
+
+var AddGoogleAccountsTable{{ .MigrationTimestamp }}4 = database.Migration{
+	ID: "{{ .MigrationTimestamp }}4_AddGoogleAccountsTable",
+	Migrate: func(tx *gorm.DB) error {
+		return tx.Exec(`
+			CREATE TABLE IF NOT EXISTS google_accounts (
+				id SERIAL PRIMARY KEY,
+				user_id UUID NOT NULL REFERENCES "users"(id) ON DELETE CASCADE,
+				google_id TEXT NOT NULL,
+				email TEXT NOT NULL,
+				name TEXT,
+				picture_url TEXT,
+				created_at TIMESTAMP DEFAULT NOW(),
+				updated_at TIMESTAMP DEFAULT NOW(),
+				CONSTRAINT idx_google_accounts_google_id UNIQUE (google_id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_google_accounts_user_id ON google_accounts (user_id);
+			CREATE INDEX IF NOT EXISTS idx_google_accounts_email ON google_accounts (email);
+		`).Error
+	},
+	Rollback: func(tx *gorm.DB) error {
+		return tx.Exec(`
+			DROP TABLE IF EXISTS google_accounts;
+		`).Error
+	},
+}

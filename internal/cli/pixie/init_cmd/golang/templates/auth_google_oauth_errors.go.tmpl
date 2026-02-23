@@ -1,0 +1,15 @@
+package errors
+
+import "github.com/pixie-sh/errors-go"
+
+// Google OAuth error codes
+var (
+	GoogleOAuthBaseErrorCode = 70000
+
+	GoogleOAuthErrorCode        = errors.NewErrorCode("GoogleOAuthError", GoogleOAuthBaseErrorCode+errors.HTTPServerError)
+	GoogleAccountNotLinkedCode  = errors.NewErrorCode("GoogleAccountNotLinkedError", GoogleOAuthBaseErrorCode+errors.HTTPNotFound)
+	GoogleAccountAlreadyLinked  = errors.NewErrorCode("GoogleAccountAlreadyLinkedError", GoogleOAuthBaseErrorCode+errors.HTTPConflict)
+	InvalidGoogleStateCode      = errors.NewErrorCode("InvalidGoogleStateError", GoogleOAuthBaseErrorCode+errors.HTTPBadRequest)
+	GoogleCodeExchangeErrorCode = errors.NewErrorCode("GoogleCodeExchangeError", GoogleOAuthBaseErrorCode+errors.HTTPUpstreamServiceFailure)
+	GoogleUserInfoErrorCode     = errors.NewErrorCode("GoogleUserInfoError", GoogleOAuthBaseErrorCode+errors.HTTPUpstreamServiceFailure)
+)

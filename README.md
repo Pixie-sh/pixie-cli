@@ -134,6 +134,21 @@ pixie generate extract-endpoints --format table
 
 ---
 
+### Embedding in Other CLIs
+
+The `generate` command group is exported as a public Go API, allowing you to embed it directly into your own Cobra-based CLI.
+
+```go
+import "github.com/pixie-sh/pixie-cli/pkg/commands"
+
+// Add pixie's generate command to your root command
+rootCmd.AddCommand(commands.GenerateCmd())
+```
+
+This exposes the full `generate` subcommand tree (`microservice`, `domain`, `entity`, `service`, `repository`, `openapi-spec`, `extract-endpoints`) within your own CLI tool.
+
+---
+
 ## Configuration
 
 Directory conventions and naming patterns can be customized via `.pixie.yaml` or `pixie.yaml` in the project root.
