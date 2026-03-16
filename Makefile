@@ -5,7 +5,7 @@
 #   make dev              - Run CLI in development mode
 #   make dev ARGS="..."   - Run CLI with arguments
 #   make build            - Build the binary
-#   make install          - Install to ~/.pixie/
+#   make install          - Install to ~/.pixie/ and symlink into ~/.local/bin
 #   make test             - Run tests
 #   make lint             - Run linter (requires golangci-lint)
 #   make fmt              - Format code
@@ -21,6 +21,8 @@
 # Binary configuration
 BINARY_NAME := pixie
 INSTALL_DIR := $(HOME)/.pixie
+SYMLINK_DIR ?= $(HOME)/.local/bin
+SYMLINK_PATH := $(SYMLINK_DIR)/$(BINARY_NAME)
 
 # Build configuration
 GOARCH ?= $(shell go env GOARCH)
@@ -62,7 +64,7 @@ help: ## Show this help message
 	@echo "  make dev                         # Run CLI in dev mode"
 	@echo "  make dev ARGS=\"bootstrap --help\" # Run with arguments"
 	@echo "  make build                       # Build binary to ./bin/"
-	@echo "  make install                     # Install to ~/.pixie/"
+	@echo "  make install                     # Install to ~/.pixie/ and symlink into ~/.local/bin"
 	@echo ""
 	@echo "Version: $(VERSION) ($(COMMIT))"
 
@@ -97,22 +99,25 @@ build-all: ## Build for all supported platforms
 # Install
 # ─────────────────────────────────────────────────────────────────
 
-install: ## Install to ~/.pixie/ directory
+install: ## Install to ~/.pixie/ and symlink into ~/.local/bin
 	@echo "Building $(BINARY_NAME)..."
 	@go build -ldflags="$(LDFLAGS)" -o /tmp/$(BINARY_NAME) $(MAIN_PACKAGE)
 	@echo "Installing to $(INSTALL_DIR)/..."
 	@mkdir -p $(INSTALL_DIR)
 	@mv /tmp/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
 	@chmod +x $(INSTALL_DIR)/$(BINARY_NAME)
+	@mkdir -p $(SYMLINK_DIR)
+	@echo "Creating symlink at $(SYMLINK_PATH)..."
+	@ln -sfn $(INSTALL_DIR)/$(BINARY_NAME) $(SYMLINK_PATH)
 	@echo ""
 	@echo "Installed: $(INSTALL_DIR)/$(BINARY_NAME)"
+	@echo "Symlink:   $(SYMLINK_PATH) -> $(INSTALL_DIR)/$(BINARY_NAME)"
 	@echo ""
-	@echo "To add pixie to your PATH, add this line to your shell profile:"
-	@echo "  export PATH=\"\$$PATH:$(INSTALL_DIR)\""
-	@echo ""
-	@echo "Then run: source ~/.bashrc  (or ~/.zshrc)"
+	@echo "You can now run: $(BINARY_NAME) version"
 
 uninstall: ## Remove installed binary
+	@echo "Removing $(SYMLINK_PATH)..."
+	@rm -f $(SYMLINK_PATH)
 	@echo "Removing $(INSTALL_DIR)/$(BINARY_NAME)..."
 	@rm -f $(INSTALL_DIR)/$(BINARY_NAME)
 	@echo "Uninstalled."
