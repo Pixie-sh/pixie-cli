@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"github.com/pixie-sh/pixie-cli/internal/version"
 )
 
-func main() {
+func Run() {
 	rootCmd := &cobra.Command{
 		Use:     "pixie",
 		Short:   "Pixie CLI - Multi-Stack Project Generator",
@@ -19,18 +19,11 @@ func main() {
 		Version: version.Info(),
 	}
 
-	// Custom version template
 	rootCmd.SetVersionTemplate("pixie version {{.Version}}\n")
-
-	// Add flags for config and env
 	rootCmd.PersistentFlags().String("config", "", "Path to configuration file")
 	rootCmd.PersistentFlags().String("env", "", "Path to environment file")
-
-	// Register commands
-	rootCmd.AddCommand(init_cmd.InitCmd())         // Multi-stack init command
-	rootCmd.AddCommand(generate_cmd.GenerateCmd()) // Code generation tools
-
-	// Add version command for explicit version info
+	rootCmd.AddCommand(init_cmd.InitCmd())
+	rootCmd.AddCommand(generate_cmd.GenerateCmd())
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
