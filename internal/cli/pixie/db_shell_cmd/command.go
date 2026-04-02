@@ -21,6 +21,10 @@ Configuration precedence:
   3. Project config in .pixie.yaml or pixie.yaml under the db: section
   4. Built-in defaults
 
+Runtime paths:
+  - Helper-backed PostgreSQL is the primary runtime path
+  - SQLite remains available for local fallback and tests
+
 Supported built-ins:
   .help  Show available shell commands
   .exit  Close the session
@@ -59,14 +63,14 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Driver, "driver", defaultPostgresDriver, "Database driver (postgres or sqlite)")
+	cmd.Flags().StringVar(&opts.Driver, "driver", defaultPostgresDriver, "Database driver (postgres primary path; sqlite fallback/test-only)")
 	cmd.Flags().StringVar(&opts.DSN, "dsn", "", "Raw DSN/connection string (overrides host/user/name fields)")
-	cmd.Flags().StringVar(&opts.Host, "host", "", "Database host for postgres connections")
-	cmd.Flags().IntVar(&opts.Port, "port", 0, "Database port for postgres connections")
-	cmd.Flags().StringVar(&opts.Name, "name", "", "Database name for postgres connections")
-	cmd.Flags().StringVar(&opts.User, "user", "", "Database user for postgres connections")
-	cmd.Flags().StringVar(&opts.Password, "password", "", "Database password for postgres connections")
-	cmd.Flags().StringVar(&opts.SSLMode, "sslmode", "", "SSL mode for postgres connections")
+	cmd.Flags().StringVar(&opts.Host, "host", "", "Database host for helper-backed PostgreSQL connections")
+	cmd.Flags().IntVar(&opts.Port, "port", 0, "Database port for helper-backed PostgreSQL connections")
+	cmd.Flags().StringVar(&opts.Name, "name", "", "Database name for helper-backed PostgreSQL connections")
+	cmd.Flags().StringVar(&opts.User, "user", "", "Database user for helper-backed PostgreSQL connections")
+	cmd.Flags().StringVar(&opts.Password, "password", "", "Database password for helper-backed PostgreSQL connections")
+	cmd.Flags().StringVar(&opts.SSLMode, "sslmode", "", "SSL mode for helper-backed PostgreSQL connections")
 
 	return cmd
 }

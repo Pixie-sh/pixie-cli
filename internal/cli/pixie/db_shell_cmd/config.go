@@ -106,12 +106,16 @@ func (c ResolvedConfig) SQLDriverName() string {
 	}
 }
 
+func (c ResolvedConfig) IsSQLite() bool {
+	return c.Driver == defaultSQLiteDriver
+}
+
 func (c ResolvedConfig) SafeSummary() string {
 	if c.Driver == defaultSQLiteDriver {
 		return fmt.Sprintf("sqlite (%s)", c.DSN)
 	}
 
-	return fmt.Sprintf("postgres %s:%d/%s as %s (sslmode=%s)", c.Host, c.Port, c.Name, c.User, c.SSLMode)
+	return fmt.Sprintf("%s %s:%d/%s as %s (sslmode=%s)", c.Driver, c.Host, c.Port, c.Name, c.User, c.SSLMode)
 }
 
 func loadRuntimeConfig(configPath string) (DBConfig, error) {
@@ -234,18 +238,28 @@ func applyEnvValues(target *ResolvedConfig, lookup EnvironmentLookup) {
 
 	if value := lookup("PIXIE_DB_DRIVER"); value != "" {
 		target.Driver = normalizeDriver(value)
+	} else if value := lookup("DB_DRIVER"); value != "" {
+		target.Driver = normalizeDriver(value)
 	}
 	if value := lookup("PIXIE_DB_DSN"); value != "" {
+		target.DSN = value
+	} else if value := lookup("DB_DSN"); value != "" {
 		target.DSN = value
 	} else if value := lookup("DATABASE_URL"); value != "" {
 		target.DSN = value
 	}
 	if value := lookup("PIXIE_DB_HOST"); value != "" {
 		target.Host = value
+	} else if value := lookup("DB_HOST"); value != "" {
+		target.Host = value
 	} else if value := lookup("PGHOST"); value != "" {
 		target.Host = value
 	}
 	if value := lookup("PIXIE_DB_PORT"); value != "" {
+		if port, err := strconv.Atoi(value); err == nil {
+			target.Port = port
+		}
+	} else if value := lookup("DB_PORT"); value != "" {
 		if port, err := strconv.Atoi(value); err == nil {
 			target.Port = port
 		}
@@ -256,20 +270,32 @@ func applyEnvValues(target *ResolvedConfig, lookup EnvironmentLookup) {
 	}
 	if value := lookup("PIXIE_DB_NAME"); value != "" {
 		target.Name = value
+	} else if value := lookup("DB_NAME"); value != "" {
+		target.Name = value
 	} else if value := lookup("PGDATABASE"); value != "" {
 		target.Name = value
 	}
 	if value := lookup("PIXIE_DB_USER"); value != "" {
+		target.User = value
+	} else if value := lookup("DB_USERNAME"); value != "" {
+		target.User = value
+	} else if value := lookup("DB_USER"); value != "" {
 		target.User = value
 	} else if value := lookup("PGUSER"); value != "" {
 		target.User = value
 	}
 	if value := lookup("PIXIE_DB_PASSWORD"); value != "" {
 		target.Password = value
+	} else if value := lookup("DB_PASSWORD"); value != "" {
+		target.Password = value
 	} else if value := lookup("PGPASSWORD"); value != "" {
 		target.Password = value
 	}
 	if value := lookup("PIXIE_DB_SSLMODE"); value != "" {
+		target.SSLMode = value
+	} else if value := lookup("DB_SSL_MODE"); value != "" {
+		target.SSLMode = value
+	} else if value := lookup("DB_SSLMODE"); value != "" {
 		target.SSLMode = value
 	} else if value := lookup("PGSSLMODE"); value != "" {
 		target.SSLMode = value
@@ -279,7 +305,7 @@ func applyEnvValues(target *ResolvedConfig, lookup EnvironmentLookup) {
 func finalizeConfig(target *ResolvedConfig) error {
 	target.Driver = normalizeDriver(target.Driver)
 	if target.Driver != defaultPostgresDriver && target.Driver != defaultSQLiteDriver {
-		return errors.New("unsupported driver: %s", target.Driver)
+		return errors.New("unsupported driver: %s (db-shell supports helper-backed postgres and sqlite fallback/test-only)", target.Driver)
 	}
 
 	if target.Driver == defaultSQLiteDriver {
