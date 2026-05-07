@@ -20,3 +20,4 @@
 /.claude
 /.claude/settings.local.json
 /.claude/commands
+/tui.json
