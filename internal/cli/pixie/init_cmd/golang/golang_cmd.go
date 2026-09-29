@@ -59,6 +59,7 @@ type TemplateData struct {
 	Features            map[string]bool
 	Port                int
 	MetricsPort         int
+	DatabaseTestPort    int
 	Timestamp           string
 	MigrationTimestamp  string
 
@@ -381,6 +382,7 @@ func generateProjectInfrastructure(opts Options, domains []DomainInfo, configs [
 	hasEvents := false
 	hasNotifications := false
 	hasGoogleOAuth := false
+	hasAuthentication := false
 
 	for _, config := range configs {
 		for _, feature := range config.Features {
@@ -396,6 +398,9 @@ func generateProjectInfrastructure(opts Options, domains []DomainInfo, configs [
 		}
 		if config.Name == "notifications" {
 			hasNotifications = true
+		}
+		if config.Name == "authentication" {
+			hasAuthentication = true
 		}
 	}
 
@@ -451,7 +456,7 @@ func generateProjectInfrastructure(opts Options, domains []DomainInfo, configs [
 		{"uidgen.go.tmpl", filepath.Join(opts.Output, "infra/uidgen/uidgen.go"), func() bool { return hasAuth }},
 		{"uidgen_checks.go.tmpl", filepath.Join(opts.Output, "infra/uidgen/checks.go"), func() bool { return hasAuth }},
 		{"event.go.tmpl", filepath.Join(opts.Output, "infra/event/event.go"), func() bool { return hasAuth }},
-		{"auth_adapters.go.tmpl", filepath.Join(opts.Output, "internal/adapters/authentication_adapters/adapters.go"), func() bool { return hasAuth }},
+		{"auth_adapters.go.tmpl", filepath.Join(opts.Output, "internal/adapters/authentication_adapters/adapters.go"), func() bool { return hasAuthentication }},
 		{"rate_limiter_bundle.go.tmpl", filepath.Join(opts.Output, "bundles/rate_limiter_bundle.go"), func() bool { return hasAuth }},
 	}
 
@@ -504,6 +509,7 @@ func generateMicroserviceFromConfig(msConfig MicroserviceConfig, opts Options) e
 		Features:            features,
 		Port:                msConfig.Port,
 		MetricsPort:         msConfig.MetricsPort,
+		DatabaseTestPort:    msConfig.Port + 10000,
 		Timestamp:           time.Now().Format(time.RFC3339),
 		MigrationTimestamp:  fmt.Sprintf("%d", time.Now().Unix()),
 
@@ -801,7 +807,7 @@ func printNextSteps(opts Options) {
 	fmt.Printf("   cp .env.example .env\n")
 	fmt.Printf("   # Edit .env with your configuration\n\n")
 	fmt.Printf("5. Run the application:\n")
-	fmt.Printf("   make run MS=authentication\n\n")
+	fmt.Printf("   make run MS=%s\n\n", defaultRunMicroservice(opts))
 	fmt.Printf("6. Run tests:\n")
 	fmt.Printf("   make test\n\n")
 	if opts.WithCLI {
@@ -815,6 +821,26 @@ func printNextSteps(opts Options) {
 // toSnakeCase converts a string to snake_case (replaces hyphens with underscores)
 func toSnakeCase(s string) string {
 	return strings.ReplaceAll(s, "-", "_")
+}
+
+func defaultRunMicroservice(opts Options) string {
+	for _, ms := range opts.Microservices {
+		if ms == "authentication" {
+			return "authentication"
+		}
+	}
+
+	for _, ms := range opts.Microservices {
+		if ms == "notifications" {
+			return "notifications"
+		}
+	}
+
+	projectMS := opts.ProjectMS
+	if projectMS == "" {
+		projectMS = "project"
+	}
+	return projectMS
 }
 
 // generateCLITool generates the CLI tool files for the project

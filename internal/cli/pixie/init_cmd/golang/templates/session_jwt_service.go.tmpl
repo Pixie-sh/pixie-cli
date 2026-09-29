@@ -21,7 +21,6 @@ import (
 
 	"{{ .ModuleName }}/infra/uidgen"
 	"{{ .ModuleName }}/infra/version"
-	"{{ .ModuleName }}/pkg/models/auth"
 	"{{ .ModuleName }}/pkg/models/session_manager_models"
 )
 
@@ -93,16 +92,21 @@ func (l *JWTTokenService) FetchFromCacheByJWT(ctx context.Context, userToken str
 func (l *JWTTokenService) buildTokenObject(_ context.Context, id uid.UID, email string, ip string, jwtKey interface{}, channel session_manager_models.SessionChannel, entities []session_manager_models.JWTEntity) (session_manager_models.JWT, error) {
 	var roles = make(map[string]bool)
 	var features = make(map[string]bool)
-	var userStatus = auth.UserCreatedState.String()
+	const (
+		userCreatedStatus = "UserCreated"
+		userActiveStatus  = "Active"
+	)
+
+	var userStatus = userCreatedStatus
 
 	for _, entity := range entities {
-		if entity.Status == auth.UserActiveState.String() {
+		if entity.Status == userActiveStatus {
 			userStatus = entity.Status
 			roles[entity.EntityType] = true
 			features[entity.EntityType] = true
 		}
 
-		if userStatus != auth.UserActiveState.String() {
+		if userStatus != userActiveStatus {
 			userStatus = entity.Status
 		}
 	}

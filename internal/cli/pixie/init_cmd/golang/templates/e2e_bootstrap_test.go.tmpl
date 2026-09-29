@@ -20,8 +20,8 @@ import (
 
 func Test{{.DomainNameCamel}}Configuration(t *testing.T) {
 	redisAddress := "127.0.0.1:6379"
-	port := uint32({{.Port}}) // Use different port for each test
-	dsn := fmt.Sprintf("host=localhost port=%d user=postgres password=postgres dbname=postgres sslmode=disable TimeZone=UTC", port)
+	dbPort := uint32({{.DatabaseTestPort}}) // Use a different port from the HTTP server
+	dsn := fmt.Sprintf("host=localhost port=%d user=postgres password=postgres dbname=postgres sslmode=disable TimeZone=UTC", dbPort)
 	var cfg ms_{{.ServiceName}}.{{.DomainNameCamel}}MicroserviceConfiguration
 	cfgAfterParsing, expectedCfg, err := {{.DomainName}}MsConfiguration(dsn, redisAddress, "a", ":{{.Port}}", ":{{.MetricsPort}}", &cfg)
 
@@ -42,14 +42,14 @@ func Test{{.DomainNameCamel}}MicroserviceBootstrap(t *testing.T) {
 	os.Setenv("LANG", "C")
 	os.Setenv("LC_ALL", "C")
 
-	port := uint32({{.Port}}) // Use different port for each test
+	dbPort := uint32({{.DatabaseTestPort}}) // Use a different port from the HTTP server
 
-	if err := e2e_utils.KillProcessOnPort(port); err != nil {
-		t.Logf("Warning: Failed to kill process on port %d: %v", port, err)
+	if err := e2e_utils.KillProcessOnPort(dbPort); err != nil {
+		t.Logf("Warning: Failed to kill process on port %d: %v", dbPort, err)
 	}
 
-	database := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().Port(port))
-	dsn := fmt.Sprintf("host=localhost port=%d user=postgres password=postgres dbname=postgres sslmode=disable", port)
+	database := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().Port(dbPort))
+	dsn := fmt.Sprintf("host=localhost port=%d user=postgres password=postgres dbname=postgres sslmode=disable", dbPort)
 	err = database.Start()
 	if err != nil {
 		t.Fatalf("Failed to start embedded postgres: %v", err)
